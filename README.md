@@ -1,8 +1,8 @@
 # AI
 
-`AI` établit le namespace modulaire des capacités d’intelligence artificielle
-de Silex. Le noyau reste volontairement indépendant des moteurs graphiques,
-des ECS et des futurs moteurs de calcul numérique.
+`AI` establishes the modular namespace for Silex artificial-intelligence
+capabilities. The core deliberately remains independent from graphics engines,
+ECS implementations, and future numerical-computing engines.
 
 ```text
 silex install AI
@@ -10,7 +10,7 @@ silex install AI
 
 ## Documentation
 
-- [Documentation française](Docs/FR/README.md)
+- [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 
-Le package nécessite Silex 0.43.0 ou une version ultérieure.
+The package requires Silex 0.43.0 or newer.
