@@ -1,8 +1,9 @@
 # AI
 
-`AI` establishes the modular namespace for Silex artificial-intelligence
-capabilities. The core deliberately remains independent from graphics engines,
-ECS implementations, and future numerical-computing engines.
+`AI` provides modular Silex capabilities for autonomous agents. Its
+`AI.BehaviourTree` module builds typed behaviour definitions and runs
+independent execution instances while keeping the core separate from graphics
+engines, ECS implementations, and numerical-computing engines.
 
 ```text
 silex install AI

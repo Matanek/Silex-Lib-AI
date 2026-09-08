@@ -1,0 +1,208 @@
+public enum Status {
+    success
+    failure
+    running
+}
+
+public enum Transition {
+    entered
+    exited(Status)
+}
+
+public enum BuildError {
+    missing_root
+    empty_composite(str)
+    orphan_node(str)
+    unexpected_end
+    unclosed_composite(str)
+}
+
+enum NodeKind<Context> {
+    condition(func(@Context) bool)
+    action(func(&Context) Status)
+    sequence
+    selector
+}
+
+struct Node<Context> {
+    let name:str
+    let kind:NodeKind<Context>
+    var children:int[]
+}
+
+public class Builder<Context> {
+    private var nodes:Node<Context>[]
+    private var open_composites:int[]
+    private var first_orphan:str?
+    private var has_unexpected_end:bool
+
+    init() {
+        self.nodes = []
+        self.open_composites = []
+        self.first_orphan = null
+        self.has_unexpected_end = false
+    }
+
+    func begin_sequence(name:str) {
+        let index = self.append_node(name, NodeKind<Context>.sequence)
+        self.open_composites.append(index)
+    }
+
+    func begin_selector(name:str) {
+        let index = self.append_node(name, NodeKind<Context>.selector)
+        self.open_composites.append(index)
+    }
+
+    func condition(name:str, check:func(@Context) bool) {
+        self.append_node(name, NodeKind<Context>.condition(check))
+    }
+
+    func action(name:str, run:func(&Context) Status) {
+        self.append_node(name, NodeKind<Context>.action(run))
+    }
+
+    func end() {
+        if self.open_composites.is_empty() {
+            self.has_unexpected_end = true
+            return
+        }
+        self.open_composites.take_last()
+    }
+
+    func build() Result<Definition<Context>, BuildError> {
+        if self.has_unexpected_end {
+            return Result<Definition<Context>, BuildError>.failure(BuildError.unexpected_end)
+        }
+        if self.nodes.is_empty() {
+            return Result<Definition<Context>, BuildError>.failure(BuildError.missing_root)
+        }
+        if let orphan = self.first_orphan {
+            return Result<Definition<Context>, BuildError>.failure(BuildError.orphan_node(orphan))
+        }
+        if !self.open_composites.is_empty() {
+            let index = self.open_composites[-1]
+            return Result<Definition<Context>, BuildError>.failure(
+                BuildError.unclosed_composite(self.nodes[index].name)
+            )
+        }
+        for node in self.nodes {
+            match node.kind {
+                sequence => {
+                    if node.children.is_empty() {
+                        return Result<Definition<Context>, BuildError>.failure(
+                            BuildError.empty_composite(node.name)
+                        )
+                    }
+                }
+                selector => {
+                    if node.children.is_empty() {
+                        return Result<Definition<Context>, BuildError>.failure(
+                            BuildError.empty_composite(node.name)
+                        )
+                    }
+                }
+                else => {}
+            }
+        }
+        return Result<Definition<Context>, BuildError>.success(Definition<Context>(self.nodes))
+    }
+
+    private func append_node(name:str, kind:NodeKind<Context>) int {
+        let index = self.nodes.count()
+        self.nodes.append(Node<Context>(name:name, kind:kind, children:[]))
+        if self.open_composites.is_empty() {
+            if index > 0 && self.first_orphan == null {
+                self.first_orphan = name
+            }
+        } else {
+            let parent = self.open_composites[-1]
+            var parent_node = self.nodes[parent]
+            parent_node.children.append(index)
+            self.nodes[parent] = move parent_node
+        }
+        return index
+    }
+}
+
+public class Definition<Context> {
+    private let nodes:Node<Context>[]
+
+    module init(nodes:Node<Context>[]) {
+        self.nodes = move nodes
+    }
+
+    func instantiate() Instance<Context> {
+        return Instance<Context>(self)
+    }
+
+    module func evaluate(context:&Context, observe:func(@str, Transition)) Status {
+        return self.evaluate_node(0, context, observe)
+    }
+
+    private func evaluate_node(index:int, context:&Context, observe:func(@str, Transition)) Status {
+        let node = self.nodes[index]
+        observe(node.name, Transition.entered)
+
+        var result = Status.failure
+        match node.kind {
+            condition(check) => {
+                if check(context) { result = Status.success }
+                else { result = Status.failure }
+            }
+            action(run) => { result = run(context) }
+            sequence => {
+                result = Status.success
+                for child in node.children {
+                    let child_status = self.evaluate_node(child, context, observe)
+                    if child_status != Status.success {
+                        result = child_status
+                        break
+                    }
+                }
+            }
+            selector => {
+                result = Status.failure
+                for child in node.children {
+                    let child_status = self.evaluate_node(child, context, observe)
+                    if child_status != Status.failure {
+                        result = child_status
+                        break
+                    }
+                }
+            }
+        }
+
+        observe(node.name, Transition.exited(result))
+        return result
+    }
+}
+
+func ignore_transition(name:@str, transition:Transition) {}
+
+public class Instance<Context> {
+    private var definition:Definition<Context>
+    private var current_status:Status?
+
+    module init(definition:Definition<Context>) {
+        self.definition = definition
+        self.current_status = null
+    }
+
+    func evaluate(context:&Context) Status {
+        return self.evaluate(context, ignore_transition)
+    }
+
+    func evaluate(context:&Context, observe:func(@str, Transition)) Status {
+        let result = self.definition.evaluate(context, observe)
+        self.current_status = result
+        return result
+    }
+
+    func status() Status? {
+        return self.current_status
+    }
+
+    func reset() {
+        self.current_status = null
+    }
+}

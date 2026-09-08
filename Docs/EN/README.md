@@ -1,12 +1,11 @@
 # AI
 
-`AI` owns the namespace for Silex artificial-intelligence capabilities. This
-first version establishes only the package boundary: it does not present any
-algorithm as available yet.
+`AI` gathers artificial-intelligence capabilities that remain independent from
+graphics and numerical engines.
 
-Future capabilities will remain separated by intent. A behavior tool will not
-artificially depend on a tensor engine, and ECS integration will belong to an
-optional layer rather than the core.
+## Capabilities
+
+- [Build and run a Behaviour Tree](BehaviourTree.md)
 
 [Lire cette documentation en français.](../FR/README.md)
 

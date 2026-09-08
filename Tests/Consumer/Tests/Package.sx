@@ -1,6 +1,72 @@
-use AI
+use AI.BehaviourTree
 
-test "import the AI namespace through the public package boundary" {
-    let package_name = "AI"
-    assert(package_name.count() == 2)
+struct Creature {
+    var hungry:bool
+    var meals:int
+    var patrols:int
+}
+
+func is_hungry(creature:@Creature) bool {
+    return creature.hungry
+}
+
+func eat(creature:&Creature) BehaviourTree.Status {
+    creature.hungry = false
+    creature.meals++
+    return BehaviourTree.Status.success
+}
+
+func patrol(creature:&Creature) BehaviourTree.Status {
+    creature.patrols++
+    return BehaviourTree.Status.running
+}
+
+func status_name(status:BehaviourTree.Status) str {
+    return match status {
+        success => "success"
+        failure => "failure"
+        running => "running"
+    }
+}
+
+func survival_definition() BehaviourTree.Definition<Creature> {
+    var builder = BehaviourTree.Builder<Creature>()
+    builder.begin_selector("survive")
+    builder.begin_sequence("eat when hungry")
+    builder.condition("is hungry", is_hungry)
+    builder.action("eat", eat)
+    builder.end()
+    builder.action("patrol", patrol)
+    builder.end()
+
+    var definition:BehaviourTree.Definition<Creature>? = null
+    match builder.build() {
+        success(value) => { definition = value }
+        failure(_) => { panic("the consumer behaviour tree must be valid") }
+    }
+    return definition!
+}
+
+test "build and observe a complete behaviour tree through the public package boundary" {
+    var definition = survival_definition()
+    var creature = Creature(hungry:true, meals:0, patrols:0)
+    var execution = definition.instantiate()
+    var trace = ""
+
+    let first = execution.evaluate(creature, func(name:@str, transition:BehaviourTree.Transition) {
+        match transition {
+            entered => { trace += ">" + name + " " }
+            exited(status) => { trace += "<" + name + ":" + status_name(status) + " " }
+        }
+    })
+
+    assert(first == BehaviourTree.Status.success)
+    assert(creature.meals == 1)
+    assert(creature.patrols == 0)
+    assert(trace == ">survive >eat when hungry >is hungry <is hungry:success >eat <eat:success <eat when hungry:success <survive:success ")
+
+    execution.reset()
+    assert(execution.status() == null)
+    assert(execution.evaluate(creature) == BehaviourTree.Status.running)
+    assert(creature.patrols == 1)
 }

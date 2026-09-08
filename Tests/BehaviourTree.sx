@@ -1,0 +1,227 @@
+use AI.BehaviourTree
+
+struct State {
+    var checks:int
+    var actions:int
+    var step:int
+}
+
+func allow(state:@State) bool {
+    return true
+}
+
+func deny(state:@State) bool {
+    return false
+}
+
+func succeed(state:&State) BehaviourTree.Status {
+    state.actions++
+    return BehaviourTree.Status.success
+}
+
+func fail(state:&State) BehaviourTree.Status {
+    state.actions++
+    return BehaviourTree.Status.failure
+}
+
+func run(state:&State) BehaviourTree.Status {
+    state.actions++
+    return BehaviourTree.Status.running
+}
+
+func progress(state:&State) BehaviourTree.Status {
+    state.step++
+    if state.step < 2 { return BehaviourTree.Status.running }
+    return BehaviourTree.Status.success
+}
+
+func require_definition(builder:BehaviourTree.Builder<State>) BehaviourTree.Definition<State> {
+    match builder.build() {
+        success(definition) => { return definition }
+        failure(_) => { panic("expected a valid behaviour tree definition") }
+    }
+    panic("unreachable behaviour tree build result")
+}
+
+func expect_error(builder:BehaviourTree.Builder<State>, expected:BehaviourTree.BuildError) {
+    match builder.build() {
+        success(definition) => { panic("expected a behaviour tree build error") }
+        failure(error) => { assert(error == expected) }
+    }
+}
+
+test "conditions and actions expose every status" {
+    var allowed = BehaviourTree.Builder<State>()
+    allowed.condition("allow", allow)
+    var allowed_definition = require_definition(allowed)
+    var allowed_execution = allowed_definition.instantiate()
+    var allowed_state = State(checks:0, actions:0, step:0)
+    assert(allowed_execution.evaluate(allowed_state) == BehaviourTree.Status.success)
+
+    var denied = BehaviourTree.Builder<State>()
+    denied.condition("deny", deny)
+    var denied_definition = require_definition(denied)
+    var denied_execution = denied_definition.instantiate()
+    var denied_state = State(checks:0, actions:0, step:0)
+    assert(denied_execution.evaluate(denied_state) == BehaviourTree.Status.failure)
+
+    var running = BehaviourTree.Builder<State>()
+    running.action("run", run)
+    var running_definition = require_definition(running)
+    var running_execution = running_definition.instantiate()
+    var running_state = State(checks:0, actions:0, step:0)
+    assert(running_execution.evaluate(running_state) == BehaviourTree.Status.running)
+}
+
+test "sequence stops on failure or running and succeeds after all children" {
+    var failed = BehaviourTree.Builder<State>()
+    failed.begin_sequence("failed sequence")
+    failed.action("first", succeed)
+    failed.action("second", fail)
+    failed.action("unreachable", succeed)
+    failed.end()
+    var failed_definition = require_definition(failed)
+    var failed_execution = failed_definition.instantiate()
+    var failed_state = State(checks:0, actions:0, step:0)
+    assert(failed_execution.evaluate(failed_state) == BehaviourTree.Status.failure)
+    assert(failed_state.actions == 2)
+
+    var running = BehaviourTree.Builder<State>()
+    running.begin_sequence("running sequence")
+    running.action("first", succeed)
+    running.action("second", run)
+    running.action("unreachable", succeed)
+    running.end()
+    var running_definition = require_definition(running)
+    var running_execution = running_definition.instantiate()
+    var running_state = State(checks:0, actions:0, step:0)
+    assert(running_execution.evaluate(running_state) == BehaviourTree.Status.running)
+    assert(running_state.actions == 2)
+
+    var successful = BehaviourTree.Builder<State>()
+    successful.begin_sequence("successful sequence")
+    successful.action("first", succeed)
+    successful.action("second", succeed)
+    successful.end()
+    var successful_definition = require_definition(successful)
+    var successful_execution = successful_definition.instantiate()
+    var successful_state = State(checks:0, actions:0, step:0)
+    assert(successful_execution.evaluate(successful_state) == BehaviourTree.Status.success)
+    assert(successful_state.actions == 2)
+}
+
+test "selector stops on success or running and fails after all children" {
+    var successful = BehaviourTree.Builder<State>()
+    successful.begin_selector("successful selector")
+    successful.action("first", fail)
+    successful.action("second", succeed)
+    successful.action("unreachable", fail)
+    successful.end()
+    var successful_definition = require_definition(successful)
+    var successful_execution = successful_definition.instantiate()
+    var successful_state = State(checks:0, actions:0, step:0)
+    assert(successful_execution.evaluate(successful_state) == BehaviourTree.Status.success)
+    assert(successful_state.actions == 2)
+
+    var running = BehaviourTree.Builder<State>()
+    running.begin_selector("running selector")
+    running.action("first", fail)
+    running.action("second", run)
+    running.action("unreachable", succeed)
+    running.end()
+    var running_definition = require_definition(running)
+    var running_execution = running_definition.instantiate()
+    var running_state = State(checks:0, actions:0, step:0)
+    assert(running_execution.evaluate(running_state) == BehaviourTree.Status.running)
+    assert(running_state.actions == 2)
+
+    var failed = BehaviourTree.Builder<State>()
+    failed.begin_selector("failed selector")
+    failed.action("first", fail)
+    failed.action("second", fail)
+    failed.end()
+    var failed_definition = require_definition(failed)
+    var failed_execution = failed_definition.instantiate()
+    var failed_state = State(checks:0, actions:0, step:0)
+    assert(failed_execution.evaluate(failed_state) == BehaviourTree.Status.failure)
+    assert(failed_state.actions == 2)
+}
+
+test "nested composites preserve their traversal rules" {
+    var builder = BehaviourTree.Builder<State>()
+    builder.begin_selector("root")
+    builder.begin_sequence("guarded action")
+    builder.condition("denied", deny)
+    builder.action("unreachable", fail)
+    builder.end()
+    builder.begin_sequence("fallback")
+    builder.condition("allowed", allow)
+    builder.action("finish", succeed)
+    builder.end()
+    builder.end()
+
+    var definition = require_definition(builder)
+    var execution = definition.instantiate()
+    var state = State(checks:0, actions:0, step:0)
+    assert(execution.evaluate(state) == BehaviourTree.Status.success)
+    assert(state.actions == 1)
+}
+
+test "builder rejects every malformed definition before evaluation" {
+    var missing = BehaviourTree.Builder<State>()
+    expect_error(missing, BehaviourTree.BuildError.missing_root)
+
+    var empty = BehaviourTree.Builder<State>()
+    empty.begin_sequence("empty")
+    empty.end()
+    expect_error(empty, BehaviourTree.BuildError.empty_composite("empty"))
+
+    var orphan = BehaviourTree.Builder<State>()
+    orphan.action("root", succeed)
+    orphan.action("orphan", succeed)
+    expect_error(orphan, BehaviourTree.BuildError.orphan_node("orphan"))
+
+    var unexpected = BehaviourTree.Builder<State>()
+    unexpected.action("root", succeed)
+    unexpected.end()
+    expect_error(unexpected, BehaviourTree.BuildError.unexpected_end)
+
+    var unclosed = BehaviourTree.Builder<State>()
+    unclosed.begin_selector("open")
+    unclosed.action("child", succeed)
+    expect_error(unclosed, BehaviourTree.BuildError.unclosed_composite("open"))
+}
+
+test "reset clears a terminal status and the definition remains reusable" {
+    var builder = BehaviourTree.Builder<State>()
+    builder.action("finish", succeed)
+    var definition = require_definition(builder)
+    var execution = definition.instantiate()
+    var state = State(checks:0, actions:0, step:0)
+
+    assert(execution.status() == null)
+    assert(execution.evaluate(state) == BehaviourTree.Status.success)
+    assert(execution.status() == BehaviourTree.Status.success)
+    execution.reset()
+    assert(execution.status() == null)
+    assert(execution.evaluate(state) == BehaviourTree.Status.success)
+    assert(state.actions == 2)
+}
+
+test "instances sharing one definition keep independent execution status" {
+    var builder = BehaviourTree.Builder<State>()
+    builder.action("progress", progress)
+    var definition = require_definition(builder)
+    var first = definition.instantiate()
+    var second = definition.instantiate()
+    var first_state = State(checks:0, actions:0, step:0)
+    var second_state = State(checks:0, actions:0, step:1)
+
+    assert(first.evaluate(first_state) == BehaviourTree.Status.running)
+    assert(second.evaluate(second_state) == BehaviourTree.Status.success)
+    assert(first.status() == BehaviourTree.Status.running)
+    assert(second.status() == BehaviourTree.Status.success)
+    first.reset()
+    assert(first.status() == null)
+    assert(second.status() == BehaviourTree.Status.success)
+}
