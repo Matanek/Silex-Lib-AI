@@ -1,0 +1,2 @@
+// The AI root intentionally owns only the namespace until a shared public
+// capability is established by executable consumer use.

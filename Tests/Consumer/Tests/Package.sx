@@ -1,0 +1,6 @@
+use AI
+
+test "import the AI namespace through the public package boundary" {
+    let package_name = "AI"
+    assert(package_name.count() == 2)
+}
