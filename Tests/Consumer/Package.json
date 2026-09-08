@@ -1,6 +1,9 @@
 {
   "sources": "Tests",
   "dependencies": {
-    "AI": "^0.1.0"
+    "AI": "^0.1.0",
+    "GFX": "^0.39.0",
+    "GFX.Application": "^0.1.0",
+    "GFX.ECS": "^0.2.0"
   }
 }

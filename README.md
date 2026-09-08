@@ -5,6 +5,12 @@
 independent execution instances while keeping the core separate from graphics
 engines, ECS implementations, and numerical-computing engines.
 
+Loading the root `AI` module also contributes the shared definition, the
+per-agent instance, and the empty readiness marker as
+`GFX.Resources.Behaviour`, `GFX.Components.Behaviour`, and
+`GFX.Components.BehaviourReady`. Scheduling and context adaptation remain
+application-owned; AI installs no GFX plugin.
+
 ```text
 silex install AI
 ```

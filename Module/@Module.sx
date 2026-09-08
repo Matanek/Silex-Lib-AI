@@ -1,2 +1,12 @@
-// The AI root intentionally owns only the namespace until a shared public
-// capability is established by executable consumer use.
+// Marker placed only on agents whose behaviour is ready to advance. Scheduling
+// remains owned by the consumer's ECS systems rather than by the tree core.
+public struct BehaviourReady {}
+
+contribute GFX.Components {
+    public use AI.BehaviourTree.Instance as Behaviour
+    public use AI.BehaviourReady as BehaviourReady
+}
+
+contribute GFX.Resources {
+    public use AI.BehaviourTree.Definition as Behaviour
+}

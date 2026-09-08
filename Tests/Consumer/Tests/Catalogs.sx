@@ -1,0 +1,53 @@
+use AI
+use AI.BehaviourTree
+use GFX.Application
+use GFX.Components
+use GFX.ECS
+use GFX.Resources
+
+struct Mind {
+    var advances:int
+}
+
+func advance_mind(mind:&Mind) BehaviourTree.Status {
+    mind.advances++
+    return BehaviourTree.Status.success
+}
+
+func shared_behaviour() BehaviourTree.Definition<Mind> {
+    var builder = BehaviourTree.Builder<Mind>()
+    builder.action("advance", advance_mind)
+
+    var definition:BehaviourTree.Definition<Mind>? = null
+    match builder.build() {
+        success(value) => { definition = value }
+        failure(_) => { panic("the catalog consumer behaviour must be valid") }
+    }
+    return definition!
+}
+
+test "consume behaviour roles directly and through the GFX catalogs" {
+    var definition = shared_behaviour()
+    var application = Application()..add_resource(definition)
+    var resources = application.resources()
+
+    assert(resources.has<Resources.Behaviour<Mind>>())
+    assert(resources.has<BehaviourTree.Definition<Mind>>())
+    var shared:@Resources.Behaviour<Mind> = resources.get<Resources.Behaviour<Mind>>()
+
+    var world = ECS.World()
+    let entity = world.spawn(ECS.EntityRecipe()
+        ..with(shared.instantiate())
+        ..with(Components.BehaviourReady())
+    )
+
+    assert(world.has<Components.Behaviour<Mind>>(entity))
+    assert(world.has<BehaviourTree.Instance<Mind>>(entity))
+    assert(world.has<Components.BehaviourReady>(entity))
+    assert(world.has<AI.BehaviourReady>(entity))
+
+    var mind = Mind(advances:0)
+    var behaviour = world.get<Components.Behaviour<Mind>>(entity)
+    assert(behaviour.evaluate(mind) == BehaviourTree.Status.success)
+    assert(mind.advances == 1)
+}

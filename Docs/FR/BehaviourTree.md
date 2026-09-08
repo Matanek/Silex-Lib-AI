@@ -104,6 +104,52 @@ Le package ne choisit pas le moment de la reprise. Une boucle peut rappeler
 l’instance à la frame suivante, tandis qu’un ordonnanceur peut attendre un
 événement ou une échéance sans aucun travail intermédiaire dans l’arbre.
 
+## Composer avec les catalogues GFX
+
+Le module racine `AI` publie trois rôles dans les catalogues ouverts de GFX :
+
+- `GFX.Resources.Behaviour<Context>` est exactement
+  `AI.BehaviourTree.Definition<Context>` ;
+- `GFX.Components.Behaviour<Context>` est exactement
+  `AI.BehaviourTree.Instance<Context>` ;
+- `GFX.Components.BehaviourReady` est exactement `AI.BehaviourReady`.
+
+Ces noms décrivent le placement, sans envelopper ni dupliquer les objets. Une
+application ECS peut donc conserver une seule définition en ressource, une
+instance mutable par entité et le contexte de gameplay dans un composant
+séparé. Le marqueur `BehaviourReady` ne contient aucune donnée métier : un
+système de timer, de perception ou d’événement l’ajoute seulement aux agents
+qui doivent reprendre, puis le système d’arbre le retire après l’évaluation.
+
+```sx
+use AI
+use GFX.Components
+use GFX.ECS
+use GFX.Resources
+
+var shared:@Resources.Behaviour<Creature> = resources.get<
+    Resources.Behaviour<Creature>
+>()
+
+let entity = world.spawn(ECS.EntityRecipe()
+    ..with(shared.instantiate())
+    ..with(Components.BehaviourReady())
+)
+
+assert(world.has<Components.Behaviour<Creature>>(entity))
+```
+
+`AI` ne contribue aucun plugin : le package ne peut pas choisir comment
+adapter un `World` à `Context`, ordonner les systèmes ni décider quelles
+échéances réveillent un agent. Ces responsabilités restent dans
+l’application. Un danger prioritaire peut, par exemple, cibler une entité,
+appeler explicitement `interrupt(context)`, puis ajouter `BehaviourReady` pour
+forcer la prochaine évaluation à repartir de la racine.
+
+Le cœur reste utilisable directement avec `use AI.BehaviourTree` et son API ne
+mentionne ni entité ni World. La dépendance de package `AI -> GFX` sert
+uniquement à autoriser ces contributions aux catalogues publics.
+
 ## Borner le travail d’un appel
 
 `advance(context, budget)` limite le nombre de nouveaux nœuds visités pendant

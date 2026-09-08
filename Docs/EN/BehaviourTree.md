@@ -103,6 +103,51 @@ The package does not choose when execution resumes. A loop may call the
 instance on the next frame, while a scheduler may wait for an event or a
 deadline without performing any intermediate tree work.
 
+## Compose with the GFX catalogs
+
+The root `AI` module publishes three roles in GFX's open catalogs:
+
+- `GFX.Resources.Behaviour<Context>` is exactly
+  `AI.BehaviourTree.Definition<Context>`;
+- `GFX.Components.Behaviour<Context>` is exactly
+  `AI.BehaviourTree.Instance<Context>`;
+- `GFX.Components.BehaviourReady` is exactly `AI.BehaviourReady`.
+
+These names describe placement without wrapping or duplicating the objects. An
+ECS application can therefore keep one definition as a resource, one mutable
+instance per entity, and the gameplay context in a separate component. The
+`BehaviourReady` marker contains no gameplay data: a timer, perception, or
+event system adds it only to agents that must resume, and the tree system
+removes it after evaluation.
+
+```sx
+use AI
+use GFX.Components
+use GFX.ECS
+use GFX.Resources
+
+var shared:@Resources.Behaviour<Creature> = resources.get<
+    Resources.Behaviour<Creature>
+>()
+
+let entity = world.spawn(ECS.EntityRecipe()
+    ..with(shared.instantiate())
+    ..with(Components.BehaviourReady())
+)
+
+assert(world.has<Components.Behaviour<Creature>>(entity))
+```
+
+`AI` contributes no plugin: the package cannot choose how a `World` is adapted
+to `Context`, how systems are ordered, or which deadlines wake an agent. Those
+responsibilities remain in the application. A priority danger event may, for
+example, target one entity, explicitly call `interrupt(context)`, then add
+`BehaviourReady` so the next evaluation restarts at the root.
+
+The core remains directly available through `use AI.BehaviourTree`, and its
+API mentions neither entities nor World. The `AI -> GFX` package dependency
+exists only to authorize these contributions to the public catalogs.
+
 ## Bound the work of one call
 
 `advance(context, budget)` limits the number of new nodes visited during the
