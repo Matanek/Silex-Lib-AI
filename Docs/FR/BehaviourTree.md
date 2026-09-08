@@ -74,11 +74,66 @@ Plusieurs instances peuvent partager la même définition. Leur statut
 d’exécution reste indépendant ; seul le contexte explicitement fourni à une
 évaluation est modifié.
 
+## Reprendre et interrompre une action
+
+Lorsqu’une action retourne `running`, l’instance conserve cette feuille et le
+chemin de composites qui y conduit. L’appel suivant à `evaluate` reprend
+directement l’action : les conditions déjà résolues et les frères précédents ne
+sont pas reparcourus.
+
+Une action longue peut déclarer un hook d’abandon avec la surcharge à trois
+arguments de `action`. Dans ce fragment, `Creature` possède un champ mutable
+`patrol_reserved` et `patrol` désigne l’action longue :
+
+```sx
+func abandon_patrol(creature:&Creature) {
+    creature.patrol_reserved = false
+}
+
+builder.action("patrol", patrol, abandon_patrol)
+```
+
+`execution.interrupt(creature)` appelle ce hook au plus une fois pour l’action
+active, efface le chemin conservé et force la prochaine évaluation à repartir
+de la racine. `reset(creature)` possède la même garantie d’abandon et remet
+l’instance à son état initial. La forme `reset()` sans contexte convient à une
+instance inactive ou terminale ; une action `running` exige la forme qui reçoit
+le contexte afin que son hook puisse nettoyer son travail.
+
+Le package ne choisit pas le moment de la reprise. Une boucle peut rappeler
+l’instance à la frame suivante, tandis qu’un ordonnanceur peut attendre un
+événement ou une échéance sans aucun travail intermédiaire dans l’arbre.
+
+## Borner le travail d’un appel
+
+`advance(context, budget)` limite le nombre de nouveaux nœuds visités pendant
+l’appel et rend l’épuisement explicite :
+
+```sx
+match execution.advance(creature, 8) {
+    status(_) => { print("tree completed") }
+    budget_exhausted => { print("resume later") }
+}
+```
+
+`budget_exhausted` conserve la progression et ne constitue pas un
+`Status.running` produit par une action. `evaluate` emploie automatiquement un
+budget dérivé du nombre de nœuds préparés ; pour un arbre statique valide, ce
+budget couvre un parcours ou une reprise ordinaire.
+
+La définition aplatie et la profondeur maximale sont calculées une seule fois
+par `build()`. `instantiate()` réserve ensuite le chemin nécessaire à l’agent :
+les évaluations, reprises, interruptions et remises à zéro ordinaires ne font
+pas croître ce stockage.
+
 ## Observer un parcours
 
-La surcharge d’`evaluate` qui reçoit un callback signale `entered` avant un
-nœud puis `exited(Status)` lorsque l’appel du nœud rend son statut. Le callback
-reçoit le nom public du nœud, jamais un indice interne.
+La surcharge d’`evaluate` qui reçoit un callback signale `entered` lorsqu’un
+nœud est visité puis `exited(Status)` lorsque sa progression produit un statut.
+Le callback reçoit le nom public du nœud, jamais un indice interne. Une reprise
+ne signale donc pas les conditions ni les frères déjà résolus ; seuls la
+feuille active et les composites nécessaires à la suite peuvent produire de
+nouvelles transitions.
 
 ```sx
 var trace = ""

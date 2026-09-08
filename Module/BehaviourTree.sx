@@ -4,6 +4,11 @@ public enum Status {
     running
 }
 
+public enum AdvanceResult {
+    status(Status)
+    budget_exhausted
+}
+
 public enum Transition {
     entered
     exited(Status)
@@ -19,7 +24,7 @@ public enum BuildError {
 
 enum NodeKind<Context> {
     condition(func(@Context) bool)
-    action(func(&Context) Status)
+    action(func(&Context) Status, func(&Context)?)
     sequence
     selector
 }
@@ -27,7 +32,13 @@ enum NodeKind<Context> {
 struct Node<Context> {
     let name:str
     let kind:NodeKind<Context>
+    let parent:int
     var children:int[]
+}
+
+struct Frame {
+    var node_index:int
+    var next_child:int
 }
 
 public class Builder<Context> {
@@ -35,12 +46,14 @@ public class Builder<Context> {
     private var open_composites:int[]
     private var first_orphan:str?
     private var has_unexpected_end:bool
+    private var maximum_depth:int
 
     init() {
         self.nodes = []
         self.open_composites = []
         self.first_orphan = null
         self.has_unexpected_end = false
+        self.maximum_depth = 0
     }
 
     func begin_sequence(name:str) {
@@ -58,7 +71,11 @@ public class Builder<Context> {
     }
 
     func action(name:str, run:func(&Context) Status) {
-        self.append_node(name, NodeKind<Context>.action(run))
+        self.append_node(name, NodeKind<Context>.action(run, null))
+    }
+
+    func action(name:str, run:func(&Context) Status, abandon:func(&Context)) {
+        self.append_node(name, NodeKind<Context>.action(run, abandon))
     }
 
     func end() {
@@ -104,18 +121,27 @@ public class Builder<Context> {
                 else => {}
             }
         }
-        return Result<Definition<Context>, BuildError>.success(Definition<Context>(self.nodes))
+        return Result<Definition<Context>, BuildError>.success(
+            Definition<Context>(self.nodes, self.maximum_depth)
+        )
     }
 
     private func append_node(name:str, kind:NodeKind<Context>) int {
         let index = self.nodes.count()
-        self.nodes.append(Node<Context>(name:name, kind:kind, children:[]))
+        let depth = self.open_composites.count() + 1
+        if depth > self.maximum_depth { self.maximum_depth = depth }
+
+        var parent = -1
         if self.open_composites.is_empty() {
             if index > 0 && self.first_orphan == null {
                 self.first_orphan = name
             }
         } else {
-            let parent = self.open_composites[-1]
+            parent = self.open_composites[-1]
+        }
+
+        self.nodes.append(Node<Context>(name:name, kind:kind, parent:parent, children:[]))
+        if parent >= 0 {
             var parent_node = self.nodes[parent]
             parent_node.children.append(index)
             self.nodes[parent] = move parent_node
@@ -126,54 +152,31 @@ public class Builder<Context> {
 
 public class Definition<Context> {
     private let nodes:Node<Context>[]
+    private let maximum_depth:int
 
-    module init(nodes:Node<Context>[]) {
+    module init(nodes:Node<Context>[], maximum_depth:int) {
         self.nodes = move nodes
+        self.maximum_depth = maximum_depth
     }
 
     func instantiate() Instance<Context> {
         return Instance<Context>(self)
     }
 
-    module func evaluate(context:&Context, observe:func(@str, Transition)) Status {
-        return self.evaluate_node(0, context, observe)
-    }
+    module func default_budget() int { return self.nodes.count() }
+    module func stack_capacity() int { return self.maximum_depth }
+    module func name(index:int) str { return self.nodes[index].name }
+    module func kind(index:int) NodeKind<Context> { return self.nodes[index].kind }
+    module func child_count(index:int) int { return self.nodes[index].children.count() }
+    module func child(index:int, position:int) int { return self.nodes[index].children[position] }
 
-    private func evaluate_node(index:int, context:&Context, observe:func(@str, Transition)) Status {
-        let node = self.nodes[index]
-        observe(node.name, Transition.entered)
-
-        var result = Status.failure
-        match node.kind {
-            condition(check) => {
-                if check(context) { result = Status.success }
-                else { result = Status.failure }
+    module func abandon(index:int, context:&Context) {
+        match self.nodes[index].kind {
+            action(_, callback) => {
+                if let run = callback { run(context) }
             }
-            action(run) => { result = run(context) }
-            sequence => {
-                result = Status.success
-                for child in node.children {
-                    let child_status = self.evaluate_node(child, context, observe)
-                    if child_status != Status.success {
-                        result = child_status
-                        break
-                    }
-                }
-            }
-            selector => {
-                result = Status.failure
-                for child in node.children {
-                    let child_status = self.evaluate_node(child, context, observe)
-                    if child_status != Status.failure {
-                        result = child_status
-                        break
-                    }
-                }
-            }
+            else => {}
         }
-
-        observe(node.name, Transition.exited(result))
-        return result
     }
 }
 
@@ -181,28 +184,209 @@ func ignore_transition(name:@str, transition:Transition) {}
 
 public class Instance<Context> {
     private var definition:Definition<Context>
+    private var frames:Frame[]
+    private var frame_count:int
+    private var active_node:int
+    private var active_action:bool
     private var current_status:Status?
+    private var storage_growths:int
 
     module init(definition:Definition<Context>) {
         self.definition = definition
+        self.frames = []
+        self.frame_count = 0
+        self.active_node = -1
+        self.active_action = false
         self.current_status = null
+        self.storage_growths = 0
+
+        var index = 0
+        while index < definition.stack_capacity() {
+            self.frames.append(Frame(node_index:-1, next_child:0))
+            index++
+        }
     }
 
     func evaluate(context:&Context) Status {
-        return self.evaluate(context, ignore_transition)
+        return self.evaluate_internal(context, ignore_transition, false)
     }
 
     func evaluate(context:&Context, observe:func(@str, Transition)) Status {
-        let result = self.definition.evaluate(context, observe)
-        self.current_status = result
-        return result
+        return self.evaluate_internal(context, observe, true)
+    }
+
+    func advance(context:&Context, budget:int) AdvanceResult {
+        return self.advance_internal(context, budget, ignore_transition, false)
+    }
+
+    func advance(context:&Context, budget:int, observe:func(@str, Transition)) AdvanceResult {
+        return self.advance_internal(context, budget, observe, true)
     }
 
     func status() Status? {
         return self.current_status
     }
 
+    func interrupt(context:&Context) {
+        if self.active_action {
+            self.definition.abandon(self.active_node, context)
+        }
+        self.clear_progress()
+    }
+
+    func reset(context:&Context) {
+        self.interrupt(context)
+    }
+
     func reset() {
+        if self.active_action {
+            panic("resetting a running behaviour requires its context")
+        }
+        self.clear_progress()
+    }
+
+    package func storage_growth_count() int {
+        return self.storage_growths
+    }
+
+    private func evaluate_internal(
+        context:&Context,
+        observe:func(@str, Transition),
+        has_observer:bool
+    ) Status {
+        match self.advance_internal(context, self.definition.default_budget(), observe, has_observer) {
+            status(value) => { return value }
+            budget_exhausted => { panic("prepared behaviour tree exhausted its default budget") }
+        }
+        panic("unreachable behaviour tree evaluation result")
+    }
+
+    private func advance_internal(
+        context:&Context,
+        budget:int,
+        observe:func(@str, Transition),
+        has_observer:bool
+    ) AdvanceResult {
         self.current_status = null
+        if budget <= 0 {
+            return AdvanceResult.budget_exhausted
+        }
+        if self.active_node < 0 {
+            self.frame_count = 0
+            self.active_node = 0
+        }
+
+        var remaining = budget
+        while remaining > 0 {
+            let index = self.active_node
+            remaining--
+            self.emit_entered(index, observe, has_observer)
+
+            match self.definition.kind(index) {
+                condition(check) => {
+                    var result = Status.failure
+                    if check(context) { result = Status.success }
+                    self.emit_exited(index, result, observe, has_observer)
+                    if let completed = self.continue_after(result, observe, has_observer) {
+                        return completed
+                    }
+                }
+                action(run, _) => {
+                    let result = run(context)
+                    self.emit_exited(index, result, observe, has_observer)
+                    if result == Status.running {
+                        self.active_action = true
+                        self.current_status = Status.running
+                        return AdvanceResult.status(Status.running)
+                    }
+                    self.active_action = false
+                    if let completed = self.continue_after(result, observe, has_observer) {
+                        return completed
+                    }
+                }
+                sequence => { self.enter_composite(index) }
+                selector => { self.enter_composite(index) }
+            }
+        }
+
+        return AdvanceResult.budget_exhausted
+    }
+
+    private func enter_composite(index:int) {
+        self.push_frame(Frame(node_index:index, next_child:1))
+        self.active_node = self.definition.child(index, 0)
+    }
+
+    private func continue_after(
+        result:Status,
+        observe:func(@str, Transition),
+        has_observer:bool
+    ) AdvanceResult? {
+        var propagated = result
+        while self.frame_count > 0 {
+            let frame_index = self.frame_count - 1
+            let frame = self.frames[frame_index]
+            let child_count = self.definition.child_count(frame.node_index)
+
+            match self.definition.kind(frame.node_index) {
+                sequence => {
+                    if propagated == Status.success && frame.next_child < child_count {
+                        self.frames[frame_index].next_child++
+                        self.active_node = self.definition.child(frame.node_index, frame.next_child)
+                        return null
+                    }
+                    if propagated == Status.success { propagated = Status.success }
+                    else { propagated = Status.failure }
+                }
+                selector => {
+                    if propagated == Status.failure && frame.next_child < child_count {
+                        self.frames[frame_index].next_child++
+                        self.active_node = self.definition.child(frame.node_index, frame.next_child)
+                        return null
+                    }
+                    if propagated == Status.failure { propagated = Status.failure }
+                    else { propagated = Status.success }
+                }
+                else => { panic("behaviour tree execution frame must contain a composite") }
+            }
+
+            self.frame_count--
+            self.emit_exited(frame.node_index, propagated, observe, has_observer)
+        }
+
+        self.active_node = -1
+        self.active_action = false
+        self.current_status = propagated
+        return AdvanceResult.status(propagated)
+    }
+
+    private func push_frame(frame:Frame) {
+        if self.frame_count >= self.frames.count() {
+            self.frames.append(frame)
+            self.storage_growths++
+        } else {
+            self.frames[self.frame_count] = frame
+        }
+        self.frame_count++
+    }
+
+    private func clear_progress() {
+        self.frame_count = 0
+        self.active_node = -1
+        self.active_action = false
+        self.current_status = null
+    }
+
+    private func emit_entered(index:int, observe:func(@str, Transition), enabled:bool) {
+        if enabled { observe(self.definition.name(index), Transition.entered) }
+    }
+
+    private func emit_exited(
+        index:int,
+        status:Status,
+        observe:func(@str, Transition),
+        enabled:bool
+    ) {
+        if enabled { observe(self.definition.name(index), Transition.exited(status)) }
     }
 }

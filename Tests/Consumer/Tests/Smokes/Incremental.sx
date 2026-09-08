@@ -1,0 +1,58 @@
+use AI.BehaviourTree
+
+struct State {
+    var urgent:bool
+    var ordinary_runs:int
+    var urgent_runs:int
+    var abandons:int
+}
+
+func urgent_now(state:@State) bool { return state.urgent }
+
+func run_urgent(state:&State) BehaviourTree.Status {
+    state.urgent_runs++
+    return BehaviourTree.Status.success
+}
+
+func run_ordinary(state:&State) BehaviourTree.Status {
+    state.ordinary_runs++
+    return BehaviourTree.Status.running
+}
+
+func abandon_ordinary(state:&State) { state.abandons++ }
+
+func status_name(status:BehaviourTree.Status) str {
+    return match status {
+        success => "success"
+        failure => "failure"
+        running => "running"
+    }
+}
+
+func main() {
+    var builder = BehaviourTree.Builder<State>()
+    builder.begin_selector("priorities")
+    builder.begin_sequence("urgent branch")
+    builder.condition("urgent now", urgent_now)
+    builder.action("handle urgent", run_urgent)
+    builder.end()
+    builder.action("ordinary work", run_ordinary, abandon_ordinary)
+    builder.end()
+
+    var definition:BehaviourTree.Definition<State>? = null
+    match builder.build() {
+        success(value) => { definition = value }
+        failure(_) => { panic("expected a valid parity behaviour") }
+    }
+
+    var state = State(urgent:false, ordinary_runs:0, urgent_runs:0, abandons:0)
+    var execution = definition!.instantiate()
+    print(status_name(execution.evaluate(state)))
+    state.urgent = true
+    print(status_name(execution.evaluate(state)))
+    execution.interrupt(state)
+    print(state.abandons)
+    print(status_name(execution.evaluate(state)))
+    print(state.ordinary_runs)
+    print(state.urgent_runs)
+}

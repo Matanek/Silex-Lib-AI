@@ -4,6 +4,7 @@ struct Creature {
     var hungry:bool
     var meals:int
     var patrols:int
+    var abandoned_patrols:int
 }
 
 func is_hungry(creature:@Creature) bool {
@@ -21,6 +22,10 @@ func patrol(creature:&Creature) BehaviourTree.Status {
     return BehaviourTree.Status.running
 }
 
+func abandon_patrol(creature:&Creature) {
+    creature.abandoned_patrols++
+}
+
 func status_name(status:BehaviourTree.Status) str {
     return match status {
         success => "success"
@@ -36,7 +41,7 @@ func survival_definition() BehaviourTree.Definition<Creature> {
     builder.condition("is hungry", is_hungry)
     builder.action("eat", eat)
     builder.end()
-    builder.action("patrol", patrol)
+    builder.action("patrol", patrol, abandon_patrol)
     builder.end()
 
     var definition:BehaviourTree.Definition<Creature>? = null
@@ -49,7 +54,7 @@ func survival_definition() BehaviourTree.Definition<Creature> {
 
 test "build and observe a complete behaviour tree through the public package boundary" {
     var definition = survival_definition()
-    var creature = Creature(hungry:true, meals:0, patrols:0)
+    var creature = Creature(hungry:true, meals:0, patrols:0, abandoned_patrols:0)
     var execution = definition.instantiate()
     var trace = ""
 
@@ -69,4 +74,28 @@ test "build and observe a complete behaviour tree through the public package bou
     assert(execution.status() == null)
     assert(execution.evaluate(creature) == BehaviourTree.Status.running)
     assert(creature.patrols == 1)
+
+    creature.hungry = true
+    assert(execution.evaluate(creature) == BehaviourTree.Status.running)
+    assert(creature.meals == 1)
+    assert(creature.patrols == 2)
+
+    execution.interrupt(creature)
+    execution.interrupt(creature)
+    assert(creature.abandoned_patrols == 1)
+    assert(execution.evaluate(creature) == BehaviourTree.Status.success)
+    assert(creature.meals == 2)
+}
+
+test "bound public advancement preserves traversal between budgets" {
+    var definition = survival_definition()
+    var creature = Creature(hungry:true, meals:0, patrols:0, abandoned_patrols:0)
+    var execution = definition.instantiate()
+
+    assert(execution.advance(creature, 1) == BehaviourTree.AdvanceResult.budget_exhausted)
+    assert(creature.meals == 0)
+    assert(execution.advance(creature, 2) == BehaviourTree.AdvanceResult.budget_exhausted)
+    assert(creature.meals == 0)
+    assert(execution.advance(creature, 2) == BehaviourTree.AdvanceResult.status(BehaviourTree.Status.success))
+    assert(creature.meals == 1)
 }

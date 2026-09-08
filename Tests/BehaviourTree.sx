@@ -221,7 +221,240 @@ test "instances sharing one definition keep independent execution status" {
     assert(second.evaluate(second_state) == BehaviourTree.Status.success)
     assert(first.status() == BehaviourTree.Status.running)
     assert(second.status() == BehaviourTree.Status.success)
-    first.reset()
+    first.reset(first_state)
     assert(first.status() == null)
     assert(second.status() == BehaviourTree.Status.success)
+}
+
+struct ResumeState {
+    var progress:int
+    var finishes:int
+}
+
+func reject_primary(state:@ResumeState) bool {
+    return false
+}
+
+func accept_fallback(state:@ResumeState) bool {
+    return true
+}
+
+func resume_progress(state:&ResumeState) BehaviourTree.Status {
+    state.progress++
+    if state.progress < 2 { return BehaviourTree.Status.running }
+    return BehaviourTree.Status.success
+}
+
+func resume_finish(state:&ResumeState) BehaviourTree.Status {
+    state.finishes++
+    return BehaviourTree.Status.success
+}
+
+func resume_definition() BehaviourTree.Definition<ResumeState> {
+    var builder = BehaviourTree.Builder<ResumeState>()
+    builder.begin_selector("root")
+    builder.begin_sequence("primary")
+    builder.condition("primary available", reject_primary)
+    builder.action("unreachable", resume_finish)
+    builder.end()
+    builder.begin_sequence("fallback")
+    builder.condition("fallback available", accept_fallback)
+    builder.action("progress", resume_progress)
+    builder.action("finish", resume_finish)
+    builder.end()
+    builder.end()
+
+    match builder.build() {
+        success(definition) => { return definition }
+        failure(_) => { panic("expected a valid resume definition") }
+    }
+    panic("unreachable resume build result")
+}
+
+func resume_status_name(status:BehaviourTree.Status) str {
+    return match status {
+        success => "success"
+        failure => "failure"
+        running => "running"
+    }
+}
+
+test "running actions resume without revisiting resolved conditions or siblings" {
+    var definition = resume_definition()
+    var execution = definition.instantiate()
+    var state = ResumeState(progress:0, finishes:0)
+    var first_trace = ""
+
+    let first = execution.evaluate(state, func(name:@str, transition:BehaviourTree.Transition) {
+        match transition {
+            entered => { first_trace += ">" + name + " " }
+            exited(status) => { first_trace += "<" + name + ":" + resume_status_name(status) + " " }
+        }
+    })
+
+    assert(first == BehaviourTree.Status.running)
+    assert(state.progress == 1)
+    assert(state.finishes == 0)
+    assert(first_trace == ">root >primary >primary available <primary available:failure <primary:failure >fallback >fallback available <fallback available:success >progress <progress:running ")
+
+    var resumed_trace = ""
+    let resumed = execution.evaluate(state, func(name:@str, transition:BehaviourTree.Transition) {
+        match transition {
+            entered => { resumed_trace += ">" + name + " " }
+            exited(status) => { resumed_trace += "<" + name + ":" + resume_status_name(status) + " " }
+        }
+    })
+
+    assert(resumed == BehaviourTree.Status.success)
+    assert(state.progress == 2)
+    assert(state.finishes == 1)
+    assert(resumed_trace == ">progress <progress:success >finish <finish:success <fallback:success <root:success ")
+}
+
+struct InterruptState {
+    var urgent:bool
+    var ordinary_runs:int
+    var urgent_runs:int
+    var abandons:int
+}
+
+func urgent_now(state:@InterruptState) bool {
+    return state.urgent
+}
+
+func run_urgent(state:&InterruptState) BehaviourTree.Status {
+    state.urgent_runs++
+    return BehaviourTree.Status.success
+}
+
+func run_ordinary(state:&InterruptState) BehaviourTree.Status {
+    state.ordinary_runs++
+    return BehaviourTree.Status.running
+}
+
+func abandon_ordinary(state:&InterruptState) {
+    state.abandons++
+}
+
+func interrupt_definition() BehaviourTree.Definition<InterruptState> {
+    var builder = BehaviourTree.Builder<InterruptState>()
+    builder.begin_selector("priorities")
+    builder.begin_sequence("urgent branch")
+    builder.condition("urgent now", urgent_now)
+    builder.action("handle urgent", run_urgent)
+    builder.end()
+    builder.action("ordinary work", run_ordinary, abandon_ordinary)
+    builder.end()
+
+    match builder.build() {
+        success(definition) => { return definition }
+        failure(_) => { panic("expected a valid interruption definition") }
+    }
+    panic("unreachable interruption build result")
+}
+
+test "interruption abandons once and reevaluates priorities from the root" {
+    var definition = interrupt_definition()
+    var execution = definition.instantiate()
+    var state = InterruptState(urgent:false, ordinary_runs:0, urgent_runs:0, abandons:0)
+
+    assert(execution.evaluate(state) == BehaviourTree.Status.running)
+    assert(state.ordinary_runs == 1)
+
+    state.urgent = true
+    assert(execution.evaluate(state) == BehaviourTree.Status.running)
+    assert(state.ordinary_runs == 2)
+
+    execution.interrupt(state)
+    assert(state.abandons == 1)
+    assert(execution.status() == null)
+    execution.interrupt(state)
+    assert(state.abandons == 1)
+
+    assert(execution.evaluate(state) == BehaviourTree.Status.success)
+    assert(state.urgent_runs == 1)
+    assert(state.ordinary_runs == 2)
+
+    state.urgent = false
+    assert(execution.evaluate(state) == BehaviourTree.Status.running)
+    execution.reset(state)
+    execution.reset(state)
+    assert(state.abandons == 2)
+    assert(execution.status() == null)
+}
+
+struct BudgetState {
+    var actions:int
+}
+
+func budget_action(state:&BudgetState) BehaviourTree.Status {
+    state.actions++
+    return BehaviourTree.Status.success
+}
+
+test "advance exposes budget exhaustion and preserves pending traversal" {
+    var builder = BehaviourTree.Builder<BudgetState>()
+    builder.begin_sequence("bounded sequence")
+    builder.action("one", budget_action)
+    builder.action("two", budget_action)
+    builder.action("three", budget_action)
+    builder.end()
+    var definition:BehaviourTree.Definition<BudgetState>? = null
+    match builder.build() {
+        success(value) => { definition = value }
+        failure(_) => { panic("expected a valid bounded definition") }
+    }
+
+    var execution = definition!.instantiate()
+    var state = BudgetState(actions:0)
+    assert(execution.advance(state, 0) == BehaviourTree.AdvanceResult.budget_exhausted)
+    assert(state.actions == 0)
+    assert(execution.advance(state, 1) == BehaviourTree.AdvanceResult.budget_exhausted)
+    assert(state.actions == 0)
+    assert(execution.advance(state, 1) == BehaviourTree.AdvanceResult.budget_exhausted)
+    assert(state.actions == 1)
+    assert(execution.advance(state, 2) == BehaviourTree.AdvanceResult.status(BehaviourTree.Status.success))
+    assert(state.actions == 3)
+    assert(execution.status() == BehaviourTree.Status.success)
+}
+
+struct StorageState {
+    var step:int
+}
+
+func storage_progress(state:&StorageState) BehaviourTree.Status {
+    state.step++
+    if state.step < 2 { return BehaviourTree.Status.running }
+    return BehaviourTree.Status.success
+}
+
+test "prepared instances keep stable storage across warm evaluations and resets" {
+    var builder = BehaviourTree.Builder<StorageState>()
+    var depth = 0
+    while depth < 12 {
+        builder.begin_sequence("layer")
+        depth++
+    }
+    builder.action("progress", storage_progress)
+    while depth > 0 {
+        builder.end()
+        depth--
+    }
+    var definition:BehaviourTree.Definition<StorageState>? = null
+    match builder.build() {
+        success(value) => { definition = value }
+        failure(_) => { panic("expected a valid deep definition") }
+    }
+
+    var execution = definition!.instantiate()
+    var state = StorageState(step:0)
+    let prepared_growths = execution.storage_growth_count()
+    for iteration in 0...64 {
+        state.step = 0
+        assert(execution.evaluate(state) == BehaviourTree.Status.running)
+        assert(execution.evaluate(state) == BehaviourTree.Status.success)
+        execution.reset(state)
+    }
+    assert(execution.storage_growth_count() == prepared_growths)
+    assert(prepared_growths == 0)
 }
