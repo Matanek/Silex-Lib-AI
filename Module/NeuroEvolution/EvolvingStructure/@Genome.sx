@@ -1,0 +1,461 @@
+use STD.Math
+use STD.Randomizer
+
+public struct Genome {
+    private let input_size:int
+    private let output_size:int
+    private var node_genes:NodeGene[]
+    private var connection_genes:ConnectionGene[]
+
+    module init(
+        input_count:int,
+        output_count:int,
+        nodes:NodeGene[],
+        connections:ConnectionGene[]
+    ) {
+        self.input_size = input_count
+        self.output_size = output_count
+        self.node_genes = nodes
+        self.connection_genes = connections
+    }
+
+    func input_count() int { return self.input_size }
+    func output_count() int { return self.output_size }
+    func node_count() int { return self.node_genes.count() }
+    func connection_count() int { return self.connection_genes.count() }
+
+    func enabled_connection_count() int {
+        var count = 0
+        for connection in self.connection_genes {
+            if connection.is_enabled() { count++ }
+        }
+        return count
+    }
+
+    func nodes() NodeGene[] { return self.node_genes }
+    func connections() ConnectionGene[] { return self.connection_genes }
+
+    func forward(inputs:float[]) float[] {
+        if inputs.count() != self.input_size {
+            panic("AI.NeuroEvolution.EvolvingStructure.Genome.forward input count mismatch")
+        }
+        var values:float[] = []
+        var resolved:bool[] = []
+        var input_index = 0
+        for node in self.node_genes {
+            if node.kind() == NodeKind.input {
+                values.append(inputs[input_index])
+                resolved.append(true)
+                input_index++
+            } else if node.kind() == NodeKind.bias {
+                values.append(1.0)
+                resolved.append(true)
+            } else {
+                values.append(0.0)
+                resolved.append(false)
+            }
+        }
+
+        var unresolved = self.node_genes.count() - self.input_size - 1
+        while unresolved > 0 {
+            var progressed = false
+            var node_index = 0
+            while node_index < self.node_genes.count() {
+                if !resolved[node_index] {
+                    let node = self.node_genes[node_index]
+                    var ready = true
+                    var total = 0.0
+                    for connection in self.connection_genes {
+                        if connection.is_enabled() && connection.target() == node.id() {
+                            let source_index = node_index_for(self.node_genes, connection.source())
+                            if !resolved[source_index] {
+                                ready = false
+                            } else {
+                                total += values[source_index] * connection.weight()
+                            }
+                        }
+                    }
+                    if ready {
+                        values[node_index] = activate(total, node.activation())
+                        resolved[node_index] = true
+                        unresolved--
+                        progressed = true
+                    }
+                }
+                node_index++
+            }
+            if !progressed {
+                panic("AI.NeuroEvolution.EvolvingStructure.Genome.forward requires an acyclic genome")
+            }
+        }
+
+        var outputs:float[] = []
+        var node_index = 0
+        while node_index < self.node_genes.count() {
+            if self.node_genes[node_index].kind() == NodeKind.output {
+                outputs.append(values[node_index])
+            }
+            node_index++
+        }
+        return outputs
+    }
+
+    module func replace_connections(connections:ConnectionGene[]) {
+        self.connection_genes = connections
+    }
+
+    module func append_node(node:NodeGene) { self.node_genes.append(node) }
+
+    module func append_connection(connection:ConnectionGene) {
+        self.connection_genes.append(connection)
+    }
+}
+
+func minimal_genome(
+    input_count:int,
+    output_count:int,
+    output_activation:Activation,
+    history:InnovationHistory,
+    randomizer:Randomizer
+) Genome {
+    var nodes:NodeGene[] = []
+    var input = 0
+    while input < input_count {
+        nodes.append(NodeGene(input, NodeKind.input, Activation.linear))
+        input++
+    }
+    let bias = input_count
+    nodes.append(NodeGene(bias, NodeKind.bias, Activation.linear))
+    var output = 0
+    while output < output_count {
+        nodes.append(NodeGene(input_count + 1 + output, NodeKind.output, output_activation))
+        output++
+    }
+
+    var connections:ConnectionGene[] = []
+    var source = 0
+    while source <= input_count {
+        output = 0
+        while output < output_count {
+            let target = input_count + 1 + output
+            connections.append(ConnectionGene(
+                history.connection(source, target),
+                source,
+                target,
+                randomizer.get_float(-1.0, 1.0)
+            ))
+            output++
+        }
+        source++
+    }
+    return Genome(input_count, output_count, nodes, connections)
+}
+
+func mutate_genome(
+    genome:&Genome,
+    history:InnovationHistory,
+    randomizer:Randomizer,
+    configuration:Configuration
+) {
+    mutate_weights(genome, randomizer, configuration)
+    if randomizer.get_float() < configuration.add_connection_probability {
+        add_connection(genome, history, randomizer)
+    }
+    if randomizer.get_float() < configuration.add_node_probability {
+        add_node(genome, history, randomizer, configuration.hidden_activation)
+    }
+}
+
+func mutate_weights(
+    genome:&Genome,
+    randomizer:Randomizer,
+    configuration:Configuration
+) {
+    var connections = genome.connections()
+    var index = 0
+    while index < connections.count() {
+        if randomizer.get_float() < configuration.weight_mutation_probability {
+            var weight = connections[index].weight()
+            if randomizer.get_float() < configuration.weight_reset_probability {
+                weight = randomizer.get_float(-1.0, 1.0)
+            } else {
+                weight += randomizer.get_float(
+                    -configuration.weight_perturbation,
+                    configuration.weight_perturbation
+                )
+            }
+            connections[index] = connections[index].with_weight(weight)
+        }
+        index++
+    }
+    genome.replace_connections(connections)
+}
+
+func add_connection(
+    genome:&Genome,
+    history:InnovationHistory,
+    randomizer:Randomizer
+) bool {
+    let nodes = genome.nodes()
+    let connections = genome.connections()
+    var candidates:EdgeCandidate[] = []
+    for source in nodes {
+        if source.kind() != NodeKind.output {
+            for target in nodes {
+                if target.kind() != NodeKind.input && target.kind() != NodeKind.bias &&
+                    source.id() != target.id() &&
+                    !has_connection(connections, source.id(), target.id()) &&
+                    !path_exists(connections, target.id(), source.id()) {
+                    candidates.append(EdgeCandidate(source.id(), target.id()))
+                }
+            }
+        }
+    }
+    if candidates.is_empty() { return false }
+    let selected = candidates[randomizer.get_int(0, candidates.count())]
+    genome.append_connection(ConnectionGene(
+        history.connection(selected.source, selected.target),
+        selected.source,
+        selected.target,
+        randomizer.get_float(-1.0, 1.0)
+    ))
+    return true
+}
+
+func add_node(
+    genome:&Genome,
+    history:InnovationHistory,
+    randomizer:Randomizer,
+    activation:Activation
+) bool {
+    var enabled_indices:int[] = []
+    let original_connections = genome.connections()
+    var index = 0
+    while index < original_connections.count() {
+        if original_connections[index].is_enabled() { enabled_indices.append(index) }
+        index++
+    }
+    if enabled_indices.is_empty() { return false }
+    let selected_index = enabled_indices[randomizer.get_int(0, enabled_indices.count())]
+    let selected = original_connections[selected_index]
+    let innovation = history.split(selected)
+
+    var connections = original_connections
+    connections[selected_index] = selected.with_enabled(false)
+    genome.replace_connections(connections)
+    if !has_node(genome.nodes(), innovation.node) {
+        genome.append_node(NodeGene(innovation.node, NodeKind.hidden, activation))
+    }
+    if !has_innovation(genome.connections(), innovation.incoming_innovation) {
+        genome.append_connection(ConnectionGene(
+            innovation.incoming_innovation,
+            selected.source(),
+            innovation.node,
+            1.0
+        ))
+    }
+    if !has_innovation(genome.connections(), innovation.outgoing_innovation) {
+        genome.append_connection(ConnectionGene(
+            innovation.outgoing_innovation,
+            innovation.node,
+            selected.target(),
+            selected.weight()
+        ))
+    }
+    return true
+}
+
+func crossover_genomes(
+    fitter:@Genome,
+    other:@Genome,
+    equal_fitness:bool,
+    disabled_probability:float,
+    randomizer:Randomizer
+) Genome {
+    var nodes = fitter.nodes()
+    if equal_fitness {
+        for node in other.nodes() {
+            if !has_node(nodes, node.id()) { nodes.append(node) }
+        }
+    }
+
+    let fitter_connections = fitter.connections()
+    let other_connections = other.connections()
+    var selected:ConnectionGene[] = []
+    for connection in fitter_connections {
+        let match_index = innovation_index(other_connections, connection.innovation())
+        if match_index >= 0 {
+            let counterpart = other_connections[match_index]
+            var chosen = connection
+            if randomizer.get_bool() { chosen = counterpart }
+            if !connection.is_enabled() || !counterpart.is_enabled() {
+                chosen = chosen.with_enabled(
+                    randomizer.get_float() >= disabled_probability
+                )
+            }
+            selected.append(chosen)
+        } else if !equal_fitness || randomizer.get_bool() {
+            selected.append(connection)
+        }
+    }
+    if equal_fitness {
+        for connection in other_connections {
+            if !has_innovation(fitter_connections, connection.innovation()) &&
+                randomizer.get_bool() {
+                selected.append(connection)
+            }
+        }
+    }
+
+    var acyclic:ConnectionGene[] = []
+    for connection in selected {
+        var accepted = connection
+        if accepted.is_enabled() && path_exists(
+            acyclic, accepted.target(), accepted.source()
+        ) {
+            accepted = accepted.with_enabled(false)
+        }
+        acyclic.append(accepted)
+    }
+    return Genome(fitter.input_count(), fitter.output_count(), nodes, acyclic)
+}
+
+func compatibility_distance(
+    left:@Genome,
+    right:@Genome,
+    configuration:Configuration
+) float {
+    let left_connections = left.connections()
+    let right_connections = right.connections()
+    let left_maximum = maximum_innovation(left_connections)
+    let right_maximum = maximum_innovation(right_connections)
+    var excess = 0
+    var disjoint = 0
+    var matching = 0
+    var weight_difference = 0.0
+
+    for connection in left_connections {
+        let match_index = innovation_index(right_connections, connection.innovation())
+        if match_index >= 0 {
+            matching++
+            weight_difference += Math.abs(
+                connection.weight() - right_connections[match_index].weight()
+            )
+        } else if connection.innovation() > right_maximum {
+            excess++
+        } else {
+            disjoint++
+        }
+    }
+    for connection in right_connections {
+        if !has_innovation(left_connections, connection.innovation()) {
+            if connection.innovation() > left_maximum { excess++ }
+            else { disjoint++ }
+        }
+    }
+
+    var largest = right_connections.count()
+    if left_connections.count() > largest { largest = left_connections.count() }
+    var normalization = 1.0
+    if largest >= 20 { normalization = largest as float }
+    var average_weight_difference = 0.0
+    if matching > 0 {
+        average_weight_difference = weight_difference / (matching as float)
+    }
+    return configuration.excess_coefficient * (excess as float) / normalization +
+        configuration.disjoint_coefficient * (disjoint as float) / normalization +
+        configuration.weight_coefficient * average_weight_difference
+}
+
+func activate(value:float, activation:Activation) float {
+    return match activation {
+        linear => value
+        sigmoid => 1.0 / (1.0 + Math.exp(-value))
+        tanh => Math.tanh(value)
+        relu => relu(value)
+    }
+}
+
+func relu(value:float) float {
+    if value > 0.0 { return value }
+    return 0.0
+}
+
+func node_index_for(nodes:@NodeGene[], id:int) int {
+    var index = 0
+    while index < nodes.count() {
+        if nodes[index].id() == id { return index }
+        index++
+    }
+    panic("AI.NeuroEvolution.EvolvingStructure genome references an unknown node")
+}
+
+func has_node(nodes:@NodeGene[], id:int) bool {
+    for node in nodes {
+        if node.id() == id { return true }
+    }
+    return false
+}
+
+func has_connection(
+    connections:@ConnectionGene[], source:int, target:int
+) bool {
+    for connection in connections {
+        if connection.source() == source && connection.target() == target {
+            return true
+        }
+    }
+    return false
+}
+
+func has_innovation(connections:@ConnectionGene[], innovation:int) bool {
+    return innovation_index(connections, innovation) >= 0
+}
+
+func innovation_index(connections:@ConnectionGene[], innovation:int) int {
+    var index = 0
+    while index < connections.count() {
+        if connections[index].innovation() == innovation { return index }
+        index++
+    }
+    return -1
+}
+
+func maximum_innovation(connections:@ConnectionGene[]) int {
+    var maximum = -1
+    for connection in connections {
+        if connection.innovation() > maximum { maximum = connection.innovation() }
+    }
+    return maximum
+}
+
+func path_exists(
+    connections:@ConnectionGene[], start:int, target:int
+) bool {
+    if start == target { return true }
+    var pending:int[] = [start]
+    var visited:int[] = []
+    var cursor = 0
+    while cursor < pending.count() {
+        let current = pending[cursor]
+        cursor++
+        if has_int(visited, current) { continue }
+        visited.append(current)
+        for connection in connections {
+            if connection.is_enabled() && connection.source() == current {
+                if connection.target() == target { return true }
+                if !has_int(visited, connection.target()) {
+                    pending.append(connection.target())
+                }
+            }
+        }
+    }
+    return false
+}
+
+func has_int(values:@int[], value:int) bool {
+    for candidate in values {
+        if candidate == value { return true }
+    }
+    return false
+}

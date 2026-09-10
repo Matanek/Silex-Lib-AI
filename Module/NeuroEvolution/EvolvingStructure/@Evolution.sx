@@ -1,0 +1,374 @@
+use AI.Evolution as GeneticEvolution
+use STD.Algorithms.Sort
+use STD.Math
+use STD.Randomizer
+
+public struct Configuration {
+    let goal:GeneticEvolution.Goal
+    let hidden_activation:Activation
+    let output_activation:Activation
+    let compatibility_threshold:float
+    let excess_coefficient:float
+    let disjoint_coefficient:float
+    let weight_coefficient:float
+    let weight_mutation_probability:float
+    let weight_reset_probability:float
+    let weight_perturbation:float
+    let add_connection_probability:float
+    let add_node_probability:float
+    let disabled_inheritance_probability:float
+    let tournament_size:int
+
+    init(
+        goal:GeneticEvolution.Goal = GeneticEvolution.Goal.maximize,
+        hidden_activation:Activation = Activation.tanh,
+        output_activation:Activation = Activation.tanh,
+        compatibility_threshold:float = 3.0,
+        excess_coefficient:float = 1.0,
+        disjoint_coefficient:float = 1.0,
+        weight_coefficient:float = 0.4,
+        weight_mutation_probability:float = 0.8,
+        weight_reset_probability:float = 0.1,
+        weight_perturbation:float = 0.5,
+        add_connection_probability:float = 0.05,
+        add_node_probability:float = 0.03,
+        disabled_inheritance_probability:float = 0.75,
+        tournament_size:int = 3
+    ) {
+        require_positive_finite(compatibility_threshold, "compatibility_threshold")
+        require_non_negative_finite(excess_coefficient, "excess_coefficient")
+        require_non_negative_finite(disjoint_coefficient, "disjoint_coefficient")
+        require_non_negative_finite(weight_coefficient, "weight_coefficient")
+        require_probability(weight_mutation_probability, "weight_mutation_probability")
+        require_probability(weight_reset_probability, "weight_reset_probability")
+        require_positive_finite(weight_perturbation, "weight_perturbation")
+        require_probability(add_connection_probability, "add_connection_probability")
+        require_probability(add_node_probability, "add_node_probability")
+        require_probability(
+            disabled_inheritance_probability,
+            "disabled_inheritance_probability"
+        )
+        if tournament_size <= 0 {
+            panic("AI.NeuroEvolution.EvolvingStructure.Configuration requires a positive tournament_size")
+        }
+        self.goal = goal
+        self.hidden_activation = hidden_activation
+        self.output_activation = output_activation
+        self.compatibility_threshold = compatibility_threshold
+        self.excess_coefficient = excess_coefficient
+        self.disjoint_coefficient = disjoint_coefficient
+        self.weight_coefficient = weight_coefficient
+        self.weight_mutation_probability = weight_mutation_probability
+        self.weight_reset_probability = weight_reset_probability
+        self.weight_perturbation = weight_perturbation
+        self.add_connection_probability = add_connection_probability
+        self.add_node_probability = add_node_probability
+        self.disabled_inheritance_probability = disabled_inheritance_probability
+        self.tournament_size = tournament_size
+    }
+}
+
+public struct Individual {
+    private var current_genome:Genome
+    private let current_fitness:float
+    private let current_species:int
+
+    module init(genome:Genome, fitness:float, species:int) {
+        self.current_genome = genome
+        self.current_fitness = fitness
+        self.current_species = species
+    }
+
+    func genome() @self:Genome { return self.current_genome }
+    func fitness() float { return self.current_fitness }
+    func species() int { return self.current_species }
+
+    module func copied_genome() Genome { return self.current_genome }
+}
+
+public struct Generation {
+    private let generation_index:int
+    private var ranked_individuals:Individual[]
+    private let current_species_count:int
+
+    module init(index:int, individuals:Individual[], species_count:int) {
+        self.generation_index = index
+        self.ranked_individuals = individuals
+        self.current_species_count = species_count
+    }
+
+    func index() int { return self.generation_index }
+    func count() int { return self.ranked_individuals.count() }
+    func species_count() int { return self.current_species_count }
+    func best() Individual { return self.ranked_individuals[0] }
+    func individuals() Individual[] { return self.ranked_individuals }
+
+    func average_fitness() float {
+        var total = 0.0
+        for individual in self.ranked_individuals {
+            total += individual.fitness()
+        }
+        return total / (self.ranked_individuals.count() as float)
+    }
+}
+
+struct Species {
+    let id:int
+    var members:Individual[]
+    var selection_score:float
+
+    init(id:int) {
+        self.id = id
+        self.members = []
+        self.selection_score = 0.0
+    }
+}
+
+public class Population {
+    private var current_genomes:Genome[]
+    private var generation_index:int
+    private let configuration:Configuration
+    private var randomizer:Randomizer
+    private var history:InnovationHistory
+
+    init(
+        input_count:int,
+        output_count:int,
+        size:int,
+        seed:int,
+        configuration:Configuration = Configuration()
+    ) {
+        if input_count <= 0 {
+            panic("AI.NeuroEvolution.EvolvingStructure.Population requires a positive input_count")
+        }
+        if output_count <= 0 {
+            panic("AI.NeuroEvolution.EvolvingStructure.Population requires a positive output_count")
+        }
+        if size < 2 {
+            panic("AI.NeuroEvolution.EvolvingStructure.Population requires at least two genomes")
+        }
+        self.configuration = configuration
+        self.randomizer = Randomizer(seed)
+        self.history = InnovationHistory(input_count + output_count + 1)
+        self.generation_index = 0
+        self.current_genomes = []
+        var index = 0
+        while index < size {
+            self.current_genomes.append(minimal_genome(
+                input_count,
+                output_count,
+                configuration.output_activation,
+                self.history,
+                self.randomizer
+            ))
+            index++
+        }
+    }
+
+    func generation() int { return self.generation_index }
+    func count() int { return self.current_genomes.count() }
+    func genomes() Genome[] { return self.current_genomes }
+
+    func evaluate(score:func(@Genome) float) Generation {
+        var ranked:Individual[] = []
+        for genome in self.current_genomes {
+            let fitness = score(genome)
+            if !Math.is_finite(fitness) {
+                panic("AI.NeuroEvolution.EvolvingStructure.Population.evaluate requires finite fitness values")
+            }
+            ranked.append(Individual(genome, fitness, -1))
+        }
+        let goal = self.configuration.goal
+        Sort.sort<Individual>(
+            &ranked[0:ranked.count()],
+            func(left:@Individual, right:@Individual) bool {
+                return is_better(left.fitness(), right.fitness(), goal)
+            }
+        )
+
+        var representatives:Genome[] = []
+        var result:Individual[] = []
+        var ranked_index = 0
+        while ranked_index < ranked.count() {
+            let individual = ranked[ranked_index]
+            var species = -1
+            var index = 0
+            while index < representatives.count() {
+                if compatibility_distance(
+                    individual.genome(), representatives[index], self.configuration
+                ) < self.configuration.compatibility_threshold {
+                    species = index
+                    index = representatives.count()
+                } else {
+                    index++
+                }
+            }
+            if species < 0 {
+                species = representatives.count()
+                representatives.append(individual.copied_genome())
+            }
+            result.append(Individual(individual.copied_genome(), individual.fitness(), species))
+            ranked_index++
+        }
+        return Generation(self.generation_index, result, representatives.count())
+    }
+
+    func advance(score:func(@Genome) float) Generation {
+        var evaluated = self.evaluate(score)
+        var individuals = evaluated.individuals()
+        var species:Species[] = []
+        var species_index = 0
+        while species_index < evaluated.species_count() {
+            species.append(Species(species_index))
+            species_index++
+        }
+        var individual_index = 0
+        while individual_index < individuals.count() {
+            var individual = individuals[individual_index]
+            let species_id = individual.species()
+            var group = species[species_id]
+            group.members.append(move individual)
+            species[species_id] = move group
+            individual_index++
+        }
+
+        let worst_fitness = individuals[individuals.count() - 1].fitness()
+        var total_selection_score = 0.0
+        species_index = 0
+        while species_index < species.count() {
+            var score_total = 0.0
+            for individual in species[species_index].members {
+                let quality = relative_quality(
+                    individual.fitness(), worst_fitness, self.configuration.goal
+                )
+                if !Math.is_finite(quality) {
+                    panic("AI.NeuroEvolution.EvolvingStructure requires a finite fitness range")
+                }
+                score_total += quality
+            }
+            species[species_index].selection_score = score_total /
+                (species[species_index].members.count() as float)
+            total_selection_score += species[species_index].selection_score
+            species_index++
+        }
+
+        var next:Genome[] = []
+        species_index = 0
+        while species_index < species.count() && next.count() < self.current_genomes.count() {
+            next.append(species[species_index].members[0].copied_genome())
+            species_index++
+        }
+        while next.count() < self.current_genomes.count() {
+            let selected_species = select_species(
+                species, total_selection_score, self.randomizer
+            )
+            let left_index = tournament_parent_index(
+                species[selected_species].members,
+                self.configuration.tournament_size,
+                self.configuration.goal,
+                self.randomizer
+            )
+            let right_index = tournament_parent_index(
+                species[selected_species].members,
+                self.configuration.tournament_size,
+                self.configuration.goal,
+                self.randomizer
+            )
+            let left = species[selected_species].members[left_index]
+            let right = species[selected_species].members[right_index]
+            let left_is_better = is_better(
+                left.fitness(), right.fitness(), self.configuration.goal
+            )
+            let equal_fitness = left.fitness() == right.fitness()
+            var child = left.copied_genome()
+            if left_is_better || equal_fitness {
+                child = crossover_genomes(
+                    left.genome(),
+                    right.genome(),
+                    equal_fitness,
+                    self.configuration.disabled_inheritance_probability,
+                    self.randomizer
+                )
+            } else {
+                child = crossover_genomes(
+                    right.genome(),
+                    left.genome(),
+                    false,
+                    self.configuration.disabled_inheritance_probability,
+                    self.randomizer
+                )
+            }
+            mutate_genome(child, self.history, self.randomizer, self.configuration)
+            next.append(move child)
+        }
+        self.current_genomes = move next
+        self.generation_index++
+        return evaluated
+    }
+}
+
+func select_species(
+    species:@Species[], total:float, randomizer:Randomizer
+) int {
+    let selected = randomizer.get_float() * total
+    var accumulated = 0.0
+    var index = 0
+    while index < species.count() {
+        accumulated += species[index].selection_score
+        if selected < accumulated { return index }
+        index++
+    }
+    return species.count() - 1
+}
+
+func tournament_parent_index(
+    members:@Individual[],
+    requested_size:int,
+    goal:GeneticEvolution.Goal,
+    randomizer:Randomizer
+) int {
+    var selected = randomizer.get_int(0, members.count())
+    var contender = 1
+    var size = requested_size
+    if size > members.count() { size = members.count() }
+    while contender < size {
+        let candidate = randomizer.get_int(0, members.count())
+        if is_better(
+            members[candidate].fitness(), members[selected].fitness(), goal
+        ) {
+            selected = candidate
+        }
+        contender++
+    }
+    return selected
+}
+
+func is_better(left:float, right:float, goal:GeneticEvolution.Goal) bool {
+    if goal == GeneticEvolution.Goal.maximize { return left > right }
+    return left < right
+}
+
+func relative_quality(
+    fitness:float, worst:float, goal:GeneticEvolution.Goal
+) float {
+    if goal == GeneticEvolution.Goal.maximize { return fitness - worst + 1.0 }
+    return worst - fitness + 1.0
+}
+
+func require_probability(value:float, name:str) {
+    if !Math.is_finite(value) || value < 0.0 || value > 1.0 {
+        panic("AI.NeuroEvolution.EvolvingStructure.Configuration requires $(name) in [0, 1]")
+    }
+}
+
+func require_positive_finite(value:float, name:str) {
+    if !Math.is_finite(value) || value <= 0.0 {
+        panic("AI.NeuroEvolution.EvolvingStructure.Configuration requires positive finite $(name)")
+    }
+}
+
+func require_non_negative_finite(value:float, name:str) {
+    if !Math.is_finite(value) || value < 0.0 {
+        panic("AI.NeuroEvolution.EvolvingStructure.Configuration requires non-negative finite $(name)")
+    }
+}

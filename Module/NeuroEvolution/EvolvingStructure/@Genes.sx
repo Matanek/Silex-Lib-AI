@@ -1,0 +1,161 @@
+public enum Activation {
+    linear
+    sigmoid
+    tanh
+    relu
+}
+
+public enum NodeKind {
+    input
+    bias
+    hidden
+    output
+}
+
+public struct NodeGene {
+    private let node_id:int
+    private let node_kind:NodeKind
+    private let node_activation:Activation
+
+    module init(id:int, kind:NodeKind, activation:Activation) {
+        self.node_id = id
+        self.node_kind = kind
+        self.node_activation = activation
+    }
+
+    func id() int { return self.node_id }
+    func kind() NodeKind { return self.node_kind }
+    func activation() Activation { return self.node_activation }
+}
+
+public struct ConnectionGene {
+    private let innovation_id:int
+    private let source_node:int
+    private let target_node:int
+    private let connection_weight:float
+    private let enabled:bool
+
+    module init(
+        innovation:int,
+        source:int,
+        target:int,
+        weight:float,
+        is_enabled:bool = true
+    ) {
+        self.innovation_id = innovation
+        self.source_node = source
+        self.target_node = target
+        self.connection_weight = weight
+        self.enabled = is_enabled
+    }
+
+    func innovation() int { return self.innovation_id }
+    func source() int { return self.source_node }
+    func target() int { return self.target_node }
+    func weight() float { return self.connection_weight }
+    func is_enabled() bool { return self.enabled }
+
+    module func with_weight(weight:float) ConnectionGene {
+        return ConnectionGene(
+            self.innovation_id,
+            self.source_node,
+            self.target_node,
+            weight,
+            self.enabled
+        )
+    }
+
+    module func with_enabled(is_enabled:bool) ConnectionGene {
+        return ConnectionGene(
+            self.innovation_id,
+            self.source_node,
+            self.target_node,
+            self.connection_weight,
+            is_enabled
+        )
+    }
+}
+
+struct ConnectionInnovation {
+    let source:int
+    let target:int
+    let innovation:int
+
+    init(source:int, target:int, innovation:int) {
+        self.source = source
+        self.target = target
+        self.innovation = innovation
+    }
+}
+
+struct SplitInnovation {
+    let replaced_innovation:int
+    let node:int
+    let incoming_innovation:int
+    let outgoing_innovation:int
+
+    init(
+        replaced_innovation:int,
+        node:int,
+        incoming_innovation:int,
+        outgoing_innovation:int
+    ) {
+        self.replaced_innovation = replaced_innovation
+        self.node = node
+        self.incoming_innovation = incoming_innovation
+        self.outgoing_innovation = outgoing_innovation
+    }
+}
+
+class InnovationHistory {
+    private var next_node:int
+    private var next_innovation:int
+    private var connections:ConnectionInnovation[]
+    private var splits:SplitInnovation[]
+
+    init(first_available_node:int) {
+        self.next_node = first_available_node
+        self.next_innovation = 0
+        self.connections = []
+        self.splits = []
+    }
+
+    func connection(source:int, target:int) int {
+        for innovation in self.connections {
+            if innovation.source == source && innovation.target == target {
+                return innovation.innovation
+            }
+        }
+        let result = self.next_innovation
+        self.next_innovation++
+        self.connections.append(ConnectionInnovation(source, target, result))
+        return result
+    }
+
+    func split(connection:ConnectionGene) SplitInnovation {
+        for innovation in self.splits {
+            if innovation.replaced_innovation == connection.innovation() {
+                return innovation
+            }
+        }
+        let node = self.next_node
+        self.next_node++
+        let incoming = self.connection(connection.source(), node)
+        let outgoing = self.connection(node, connection.target())
+        let result = SplitInnovation(
+            connection.innovation(), node, incoming, outgoing
+        )
+        self.splits.append(result)
+        return result
+    }
+}
+
+struct EdgeCandidate {
+    let source:int
+    let target:int
+
+    init(source:int, target:int) {
+        self.source = source
+        self.target = target
+    }
+}

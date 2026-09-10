@@ -9,6 +9,7 @@ genomes to `Tensor.Neural` models.
 - [Build and run a Behaviour Tree](BehaviourTree.md)
 - [Evolve a population](Evolution.md)
 - [Evolve the parameters of a fixed-structure network](NeuroEvolution-FixedStructure.md)
+- [Evolve a network's structure](NeuroEvolution-EvolvingStructure.md)
 
 [Lire cette documentation en français.](../FR/README.md)
 

@@ -6,6 +6,9 @@ instances. `AI.Evolution` supplies deterministic ranking, elitism and tournament
 selection around application-defined genomes, fitness, crossover and mutation.
 `AI.NeuroEvolution.FixedStructure` adapts that generic engine to
 `Tensor.Neural` parameter genomes while preserving the network structure.
+`AI.NeuroEvolution.EvolvingStructure` provides direct, NEAT-inspired
+feed-forward neuroevolution with innovation tracking, structural mutation,
+crossover, and speciation.
 
 Loading the root `AI` module also contributes the shared definition, the
 per-agent instance, and the empty readiness marker as

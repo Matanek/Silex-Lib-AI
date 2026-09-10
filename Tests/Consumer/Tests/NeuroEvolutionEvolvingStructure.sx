@@ -1,0 +1,141 @@
+use AI.Evolution
+use AI.NeuroEvolution.EvolvingStructure
+use STD.Math
+
+func response_fitness(genome:@EvolvingStructure.Genome) float {
+    let output = genome.forward([0.25, -0.5])
+    return -Math.abs(output[0] - 0.75)
+}
+
+func connection_sets_match(
+    left:@EvolvingStructure.Genome,
+    right:@EvolvingStructure.Genome
+) bool {
+    let left_connections = left.connections()
+    let right_connections = right.connections()
+    if left_connections.count() != right_connections.count() { return false }
+    var index = 0
+    while index < left_connections.count() {
+        if left_connections[index].innovation() != right_connections[index].innovation() ||
+            left_connections[index].source() != right_connections[index].source() ||
+            left_connections[index].target() != right_connections[index].target() ||
+            left_connections[index].weight() != right_connections[index].weight() ||
+            left_connections[index].is_enabled() != right_connections[index].is_enabled() {
+            return false
+        }
+        index++
+    }
+    return true
+}
+
+func has_neat_split(genome:@EvolvingStructure.Genome) bool {
+    let nodes = genome.nodes()
+    let connections = genome.connections()
+    for node in nodes {
+        if node.kind() == EvolvingStructure.NodeKind.hidden {
+            for incoming in connections {
+                if incoming.is_enabled() && incoming.target() == node.id() &&
+                    incoming.weight() == 1.0 {
+                    for outgoing in connections {
+                        if outgoing.is_enabled() && outgoing.source() == node.id() {
+                            for replaced in connections {
+                                if !replaced.is_enabled() &&
+                                    replaced.source() == incoming.source() &&
+                                    replaced.target() == outgoing.target() &&
+                                    replaced.weight() == outgoing.weight() {
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
+test "evaluate minimal evolving-structure networks through the public boundary" {
+    let configuration = EvolvingStructure.Configuration(
+        hidden_activation:EvolvingStructure.Activation.tanh,
+        output_activation:EvolvingStructure.Activation.linear
+    )
+    var population = EvolvingStructure.Population(2, 1, 6, 41, configuration)
+    let genomes = population.genomes()
+
+    assert(genomes[0].input_count() == 2)
+    assert(genomes[0].output_count() == 1)
+    assert(genomes[0].node_count() == 4)
+    assert(genomes[0].connection_count() == 3)
+    assert(genomes[0].enabled_connection_count() == 3)
+    assert(genomes[0].forward([0.25, -0.5]).count() == 1)
+
+    let generation = population.evaluate(response_fitness)
+    assert(generation.index() == 0)
+    assert(generation.count() == 6)
+    assert(generation.species_count() > 0)
+    assert(generation.best().fitness() >= generation.individuals()[5].fitness())
+}
+
+test "complexify networks while preserving deterministic innovation history" {
+    let configuration = EvolvingStructure.Configuration(
+        output_activation:EvolvingStructure.Activation.linear,
+        weight_mutation_probability:0.0,
+        add_connection_probability:1.0,
+        add_node_probability:1.0,
+        compatibility_threshold:3.0
+    )
+    var first = EvolvingStructure.Population(2, 1, 6, 2026, configuration)
+    var second = EvolvingStructure.Population(2, 1, 6, 2026, configuration)
+
+    let evaluated = first.advance(response_fitness)
+    second.advance(response_fitness)
+
+    assert(evaluated.species_count() == 1)
+    assert(first.generation() == 1)
+    var complexified = 0
+    let first_genomes = first.genomes()
+    let second_genomes = second.genomes()
+    var index = 0
+    while index < first_genomes.count() {
+        if first_genomes[index].node_count() > 4 {
+            complexified++
+            assert(first_genomes[index].connection_count() >= 5)
+            assert(has_neat_split(first_genomes[index]))
+        }
+        assert(first_genomes[index].forward([0.25, -0.5]).count() == 1)
+        assert(first_genomes[index].node_count() == second_genomes[index].node_count())
+        assert(connection_sets_match(first_genomes[index], second_genomes[index]))
+        index++
+    }
+    assert(complexified > 0)
+}
+
+test "separate incompatible genomes into generation-local species" {
+    let configuration = EvolvingStructure.Configuration(
+        output_activation:EvolvingStructure.Activation.linear,
+        compatibility_threshold:0.000001
+    )
+    var population = EvolvingStructure.Population(2, 1, 6, 314, configuration)
+    let generation = population.evaluate(response_fitness)
+    assert(generation.species_count() > 1)
+    for individual in generation.individuals() {
+        assert(individual.species() >= 0)
+        assert(individual.species() < generation.species_count())
+    }
+}
+
+test "rank a structural population for minimization" {
+    let configuration = EvolvingStructure.Configuration(
+        goal:Evolution.Goal.minimize,
+        output_activation:EvolvingStructure.Activation.linear
+    )
+    var population = EvolvingStructure.Population(1, 1, 4, 73, configuration)
+    let generation = population.evaluate(
+        func(genome:@EvolvingStructure.Genome) float {
+            return Math.abs(genome.forward([1.0])[0])
+        }
+    )
+    let individuals = generation.individuals()
+    assert(individuals[0].fitness() <= individuals[individuals.count() - 1].fitness())
+}
