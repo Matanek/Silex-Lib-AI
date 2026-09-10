@@ -1,19 +1,19 @@
-# Evolve neural-network parameters
+# Evolve a fixed-structure neural network
 
-`AI.Neuroevolution` connects the generic evolutionary engine to fixed-topology
-`Tensor.Neural` models. `Genome.capture(model)` records named parameters and
-`genome.apply(model)` injects them after complete name, shape, and count
-validation.
+`AI.NeuroEvolution.FixedStructure` connects the generic evolutionary engine to
+`Tensor.Neural` models whose structure remains fixed. `Genome.capture(model)`
+records named parameters and `genome.apply(model)` injects them after complete
+name, shape, and count validation.
 
 ```sx
-use AI.Neuroevolution
+use AI.NeuroEvolution.FixedStructure
 use STD.Randomizer
 
-let parent_a = Neuroevolution.Genome.capture(model_a)
-let parent_b = Neuroevolution.Genome.capture(model_b)
+let parent_a = FixedStructure.Genome.capture(model_a)
+let parent_b = FixedStructure.Genome.capture(model_b)
 var randomizer = Randomizer(42)
-var child = Neuroevolution.uniform_crossover(parent_a, parent_b, randomizer)
-Neuroevolution.gaussian_mutation(child, randomizer, probability:0.05)
+var child = FixedStructure.uniform_crossover(parent_a, parent_b, randomizer)
+FixedStructure.gaussian_mutation(child, randomizer, probability:0.05)
 child.apply(model_a)
 ```
 

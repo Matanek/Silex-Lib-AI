@@ -4,8 +4,8 @@
 `AI.BehaviourTree` builds typed behaviour definitions and independent execution
 instances. `AI.Evolution` supplies deterministic ranking, elitism and tournament
 selection around application-defined genomes, fitness, crossover and mutation.
-`AI.Neuroevolution` adapts that generic engine to fixed-topology
-`Tensor.Neural` parameter genomes.
+`AI.NeuroEvolution.FixedStructure` adapts that generic engine to
+`Tensor.Neural` parameter genomes while preserving the network structure.
 
 Loading the root `AI` module also contributes the shared definition, the
 per-agent instance, and the empty readiness marker as

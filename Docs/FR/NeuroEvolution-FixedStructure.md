@@ -1,19 +1,19 @@
-# Faire évoluer les paramètres d’un réseau
+# Faire évoluer un réseau à structure fixe
 
-`AI.Neuroevolution` relie le moteur génétique générique aux modèles
-`Tensor.Neural` à topologie fixe. `Genome.capture(model)` relève les paramètres
-nommés et `genome.apply(model)` les réinjecte après validation complète des
-noms, formes et compteurs.
+`AI.NeuroEvolution.FixedStructure` relie le moteur génétique générique aux
+modèles `Tensor.Neural` dont la structure reste fixe. `Genome.capture(model)`
+relève les paramètres nommés et `genome.apply(model)` les réinjecte après
+validation complète des noms, formes et compteurs.
 
 ```sx
-use AI.Neuroevolution
+use AI.NeuroEvolution.FixedStructure
 use STD.Randomizer
 
-let parent_a = Neuroevolution.Genome.capture(model_a)
-let parent_b = Neuroevolution.Genome.capture(model_b)
+let parent_a = FixedStructure.Genome.capture(model_a)
+let parent_b = FixedStructure.Genome.capture(model_b)
 var randomizer = Randomizer(42)
-var child = Neuroevolution.uniform_crossover(parent_a, parent_b, randomizer)
-Neuroevolution.gaussian_mutation(child, randomizer, probability:0.05)
+var child = FixedStructure.uniform_crossover(parent_a, parent_b, randomizer)
+FixedStructure.gaussian_mutation(child, randomizer, probability:0.05)
 child.apply(model_a)
 ```
 

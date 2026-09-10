@@ -18,16 +18,16 @@ public struct Genome {
         var values:Tensor[] = []
         for parameter in parameters {
             if parameter.gradient() != null {
-                panic("AI.Neuroevolution.Genome.capture requires model zero_grad")
+                panic("AI.NeuroEvolution.FixedStructure.Genome.capture requires model zero_grad")
             }
             let value = parameter.value().detach()
             if !value.is_cpu() {
-                panic("AI.Neuroevolution.Genome.capture requires model.cpu")
+                panic("AI.NeuroEvolution.FixedStructure.Genome.capture requires model.cpu")
             }
             let scalars = value.values()
             for scalar in scalars {
                 if !Math.is_finite(scalar) {
-                    panic("AI.Neuroevolution.Genome.capture requires finite parameters")
+                    panic("AI.NeuroEvolution.FixedStructure.Genome.capture requires finite parameters")
                 }
             }
             names.append(parameter.name())
@@ -86,10 +86,10 @@ public func gaussian_mutation(
     standard_deviation:float = 0.1
 ) {
     if !Math.is_finite(probability) || probability < 0.0 || probability > 1.0 {
-        panic("AI.Neuroevolution.gaussian_mutation requires probability in [0, 1]")
+        panic("AI.NeuroEvolution.FixedStructure.gaussian_mutation requires probability in [0, 1]")
     }
     if !Math.is_finite(standard_deviation) || standard_deviation <= 0.0 {
-        panic("AI.Neuroevolution.gaussian_mutation requires a positive finite standard_deviation")
+        panic("AI.NeuroEvolution.FixedStructure.gaussian_mutation requires a positive finite standard_deviation")
     }
     var parameter_index = 0
     while parameter_index < genome.parameter_count() {
@@ -100,7 +100,7 @@ public func gaussian_mutation(
             if randomizer.get_float() < probability {
                 values[scalar_index] += gaussian(randomizer) * standard_deviation
                 if !Math.is_finite(values[scalar_index]) {
-                    panic("AI.Neuroevolution.gaussian_mutation produced a non-finite parameter")
+                    panic("AI.NeuroEvolution.FixedStructure.gaussian_mutation produced a non-finite parameter")
                 }
             }
             scalar_index++
@@ -114,21 +114,21 @@ func require_model_compatibility(
     genome:@Genome, parameters:Neural.Parameter[], operation:str
 ) {
     if genome.parameter_count() != parameters.count() {
-        panic("AI.Neuroevolution.Genome.$(operation) parameter count mismatch")
+        panic("AI.NeuroEvolution.FixedStructure.Genome.$(operation) parameter count mismatch")
     }
     var index = 0
     while index < parameters.count() {
         if parameters[index].gradient() != null {
-            panic("AI.Neuroevolution.Genome.$(operation) requires model zero_grad")
+            panic("AI.NeuroEvolution.FixedStructure.Genome.$(operation) requires model zero_grad")
         }
         if !parameters[index].value().is_cpu() {
-            panic("AI.Neuroevolution.Genome.$(operation) requires model.cpu")
+            panic("AI.NeuroEvolution.FixedStructure.Genome.$(operation) requires model.cpu")
         }
         if genome.name(index) != parameters[index].name() {
-            panic("AI.Neuroevolution.Genome.$(operation) parameter name mismatch")
+            panic("AI.NeuroEvolution.FixedStructure.Genome.$(operation) parameter name mismatch")
         }
         if !same_shape(genome.value(index).shape(), parameters[index].value().shape()) {
-            panic("AI.Neuroevolution.Genome.$(operation) parameter shape mismatch")
+            panic("AI.NeuroEvolution.FixedStructure.Genome.$(operation) parameter shape mismatch")
         }
         index++
     }
@@ -136,15 +136,15 @@ func require_model_compatibility(
 
 func require_genome_compatibility(left:@Genome, right:@Genome, operation:str) {
     if left.parameter_count() != right.parameter_count() {
-        panic("AI.Neuroevolution.$(operation) parameter count mismatch")
+        panic("AI.NeuroEvolution.FixedStructure.$(operation) parameter count mismatch")
     }
     var index = 0
     while index < left.parameter_count() {
         if left.name(index) != right.name(index) {
-            panic("AI.Neuroevolution.$(operation) parameter name mismatch")
+            panic("AI.NeuroEvolution.FixedStructure.$(operation) parameter name mismatch")
         }
         if !same_shape(left.value(index).shape(), right.value(index).shape()) {
-            panic("AI.Neuroevolution.$(operation) parameter shape mismatch")
+            panic("AI.NeuroEvolution.FixedStructure.$(operation) parameter shape mismatch")
         }
         index++
     }
