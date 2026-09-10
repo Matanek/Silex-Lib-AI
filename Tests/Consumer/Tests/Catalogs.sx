@@ -47,7 +47,12 @@ test "consume behaviour roles directly and through the GFX catalogs" {
     assert(world.has<AI.BehaviourReady>(entity))
 
     var mind = Mind(advances:0)
-    var behaviour = world.get<Components.Behaviour<Mind>>(entity)
-    assert(behaviour.evaluate(mind) == BehaviourTree.Status.success)
+    var status = BehaviourTree.Status.running
+    world.update<Components.Behaviour<Mind>>(entity,
+        func(behaviour:&Components.Behaviour<Mind>) {
+            status = behaviour.evaluate(mind)
+        }
+    )
+    assert(status == BehaviourTree.Status.success)
     assert(mind.advances == 1)
 }

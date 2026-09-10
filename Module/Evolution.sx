@@ -1,0 +1,159 @@
+use STD.Algorithms.Sort
+use STD.Math
+use STD.Randomizer
+
+public enum Goal {
+    maximize
+    minimize
+}
+
+public struct Configuration {
+    let goal:Goal
+    let elite_count:int
+    let tournament_size:int
+
+    init(
+        goal:Goal = Goal.maximize,
+        elite_count:int = 1,
+        tournament_size:int = 3
+    ) {
+        if elite_count < 0 {
+            panic("AI.Evolution.Configuration requires a non-negative elite_count")
+        }
+        if tournament_size <= 0 {
+            panic("AI.Evolution.Configuration requires a positive tournament_size")
+        }
+        self.goal = goal
+        self.elite_count = elite_count
+        self.tournament_size = tournament_size
+    }
+}
+
+public struct Individual<G> {
+    private var current_genome:G
+    private let current_fitness:float
+
+    module init(genome:G, fitness:float) {
+        self.current_genome = genome
+        self.current_fitness = fitness
+    }
+
+    func genome() @self:G { return self.current_genome }
+    func fitness() float { return self.current_fitness }
+}
+
+public struct Generation<G> {
+    private let generation_index:int
+    private var ranked_individuals:Individual<G>[]
+
+    module init(index:int, individuals:Individual<G>[]) {
+        self.generation_index = index
+        self.ranked_individuals = individuals
+    }
+
+    func index() int { return self.generation_index }
+    func count() int { return self.ranked_individuals.count() }
+    func best() Individual<G> { return self.ranked_individuals[0] }
+    func individuals() Individual<G>[] { return self.ranked_individuals }
+
+    func average_fitness() float {
+        var total = 0.0
+        for individual in self.ranked_individuals {
+            total += individual.fitness()
+        }
+        return total / (self.ranked_individuals.count() as float)
+    }
+}
+
+public class Population<G> {
+    private var current_genomes:G[]
+    private var generation_index:int
+    private let configuration:Configuration
+    private var randomizer:Randomizer
+
+    init(
+        genomes:G[],
+        seed:int,
+        configuration:Configuration = Configuration()
+    ) {
+        if genomes.count() < 2 {
+            panic("AI.Evolution.Population requires at least two genomes")
+        }
+        if configuration.elite_count >= genomes.count() {
+            panic("AI.Evolution.Population requires elite_count < population size")
+        }
+        if configuration.tournament_size > genomes.count() {
+            panic("AI.Evolution.Population requires tournament_size <= population size")
+        }
+        self.current_genomes = genomes
+        self.generation_index = 0
+        self.configuration = configuration
+        self.randomizer = Randomizer(seed)
+    }
+
+    func generation() int { return self.generation_index }
+    func count() int { return self.current_genomes.count() }
+    func genomes() G[] { return self.current_genomes }
+
+    func evaluate(score:func(@G) float) Generation<G> {
+        var ranked:Individual<G>[] = []
+        for genome in self.current_genomes {
+            let fitness = score(genome)
+            if !Math.is_finite(fitness) {
+                panic("AI.Evolution.Population.evaluate requires finite fitness values")
+            }
+            ranked.append(Individual<G>(genome, fitness))
+        }
+        let goal = self.configuration.goal
+        Sort.sort<Individual<G>>(
+            &ranked[0:ranked.count()],
+            func(left:@Individual<G>, right:@Individual<G>) bool {
+                if goal == Goal.maximize { return left.fitness() > right.fitness() }
+                return left.fitness() < right.fitness()
+            }
+        )
+        return Generation<G>(self.generation_index, ranked)
+    }
+
+    func advance(
+        score:func(@G) float,
+        crossover:func(@G, @G, Randomizer) G,
+        mutate:func(&G, Randomizer)
+    ) Generation<G> {
+        var evaluated = self.evaluate(score)
+        var ranked = evaluated.individuals()
+        var next:G[] = []
+        var elite = 0
+        while elite < self.configuration.elite_count {
+            next.append(ranked[elite].genome())
+            elite++
+        }
+        while next.count() < self.current_genomes.count() {
+            let left = tournament<G>(
+                ranked, self.configuration.tournament_size, self.randomizer
+            )
+            let right = tournament<G>(
+                ranked, self.configuration.tournament_size, self.randomizer
+            )
+            var child = crossover(left, right, self.randomizer)
+            mutate(child, self.randomizer)
+            next.append(move child)
+        }
+        self.current_genomes = move next
+        self.generation_index++
+        return evaluated
+    }
+}
+
+func tournament<G>(
+    ranked:@Individual<G>[], size:int, randomizer:Randomizer
+) @G {
+    var selected = randomizer.get_int(0, ranked.count())
+    var contender = 1
+    while contender < size {
+        let candidate = randomizer.get_int(0, ranked.count())
+        if candidate < selected { selected = candidate }
+        contender++
+    }
+    return ranked[selected].genome()
+}

@@ -1,0 +1,66 @@
+use AI.Evolution
+use STD.Randomizer
+
+struct ScalarGenome {
+    var value:float
+}
+
+func fitness(genome:@ScalarGenome) float { return genome.value }
+
+func crossover(
+    left:@ScalarGenome, right:@ScalarGenome, randomizer:Randomizer
+) ScalarGenome {
+    if randomizer.get_bool() { return left }
+    return right
+}
+
+func mutate(genome:&ScalarGenome, randomizer:Randomizer) {
+    genome.value += 1.0 + randomizer.get_float()
+}
+
+test "rank evolve and preserve elites through the public package boundary" {
+    var genomes:ScalarGenome[] = [
+        ScalarGenome(value:0.0),
+        ScalarGenome(value:1.0),
+        ScalarGenome(value:2.0),
+        ScalarGenome(value:3.0)
+    ]
+    let configuration = Evolution.Configuration(
+        goal:Evolution.Goal.maximize,
+        elite_count:1,
+        tournament_size:2
+    )
+    var population = Evolution.Population<ScalarGenome>(genomes, 42, configuration)
+
+    let evaluated = population.advance(fitness, crossover, mutate)
+
+    assert(evaluated.index() == 0)
+    assert(evaluated.count() == 4)
+    assert(evaluated.best().fitness() == 3.0)
+    assert(evaluated.average_fitness() == 1.5)
+    assert(population.generation() == 1)
+    assert(population.genomes()[0].value == 3.0)
+    assert(population.evaluate(fitness).best().fitness() > 3.0)
+}
+
+test "repeat evolution from one seed" {
+    var genomes:ScalarGenome[] = [
+        ScalarGenome(value:-1.0),
+        ScalarGenome(value:0.0),
+        ScalarGenome(value:1.0)
+    ]
+    let configuration = Evolution.Configuration(elite_count:0, tournament_size:2)
+    var first = Evolution.Population<ScalarGenome>(genomes, 91, configuration)
+    var second = Evolution.Population<ScalarGenome>(genomes, 91, configuration)
+
+    first.advance(fitness, crossover, mutate)
+    second.advance(fitness, crossover, mutate)
+
+    let first_genomes = first.genomes()
+    let second_genomes = second.genomes()
+    var index = 0
+    while index < first_genomes.count() {
+        assert(first_genomes[index].value == second_genomes[index].value)
+        index++
+    }
+}

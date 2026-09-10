@@ -1,11 +1,14 @@
 # AI
 
-`AI` rassemble des capacités d’intelligence artificielle indépendantes des
-moteurs graphiques et numériques.
+`AI` rassemble des capacités d’intelligence artificielle modulaires. Les
+mécaniques de comportement et d’évolution restent indépendantes du domaine ;
+une intégration explicite relie les génomes aux modèles `Tensor.Neural`.
 
 ## Capacités
 
 - [Construire et exécuter un Behaviour Tree](BehaviourTree.md)
+- [Faire évoluer une population](Evolution.md)
+- [Faire évoluer les paramètres d’un réseau Tensor](Neuroevolution.md)
 
 [Read this documentation in English.](../EN/README.md)
 

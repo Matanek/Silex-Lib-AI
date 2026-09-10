@@ -1,9 +1,11 @@
 # AI
 
-`AI` provides modular Silex capabilities for autonomous agents. Its
-`AI.BehaviourTree` module builds typed behaviour definitions and runs
-independent execution instances while keeping the core separate from graphics
-engines, ECS implementations, and numerical-computing engines.
+`AI` provides modular Silex capabilities for autonomous agents.
+`AI.BehaviourTree` builds typed behaviour definitions and independent execution
+instances. `AI.Evolution` supplies deterministic ranking, elitism and tournament
+selection around application-defined genomes, fitness, crossover and mutation.
+`AI.Neuroevolution` adapts that generic engine to fixed-topology
+`Tensor.Neural` parameter genomes.
 
 Loading the root `AI` module also contributes the shared definition, the
 per-agent instance, and the empty readiness marker as
@@ -20,4 +22,4 @@ silex install AI
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 
-The package requires Silex 0.44.0 or newer.
+The package requires Silex 0.44.1 or newer.

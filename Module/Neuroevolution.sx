@@ -1,0 +1,167 @@
+use STD.Math
+use STD.Randomizer
+use Tensor
+use Tensor.Neural
+
+public struct Genome {
+    private let parameter_names:str[]
+    private var parameter_values:Tensor[]
+
+    module init(names:str[], values:Tensor[]) {
+        self.parameter_names = names
+        self.parameter_values = values
+    }
+
+    static func capture(model:Neural.Layer) Genome {
+        var parameters = model.parameters()
+        var names:str[] = []
+        var values:Tensor[] = []
+        for parameter in parameters {
+            if parameter.gradient() != null {
+                panic("AI.Neuroevolution.Genome.capture requires model zero_grad")
+            }
+            let value = parameter.value().detach()
+            if !value.is_cpu() {
+                panic("AI.Neuroevolution.Genome.capture requires model.cpu")
+            }
+            let scalars = value.values()
+            for scalar in scalars {
+                if !Math.is_finite(scalar) {
+                    panic("AI.Neuroevolution.Genome.capture requires finite parameters")
+                }
+            }
+            names.append(parameter.name())
+            values.append(value.contiguous())
+        }
+        return Genome(names, values)
+    }
+
+    func parameter_count() int { return self.parameter_values.count() }
+    func name(index:int) str { return self.parameter_names[index] }
+    func value(index:int) Tensor { return self.parameter_values[index] }
+
+    func apply(model:Neural.Layer) {
+        var parameters = model.parameters()
+        require_model_compatibility(self, parameters, "apply")
+        var index = 0
+        while index < parameters.count() {
+            parameters[index].replace(self.parameter_values[index])
+            index++
+        }
+    }
+
+    module func names() str[] { return self.parameter_names }
+    module func values() Tensor[] { return self.parameter_values }
+    module func replace(index:int, value:Tensor) { self.parameter_values[index] = value }
+}
+
+public func uniform_crossover(
+    left:@Genome, right:@Genome, randomizer:Randomizer
+) Genome {
+    require_genome_compatibility(left, right, "uniform_crossover")
+    var values:Tensor[] = []
+    var parameter_index = 0
+    while parameter_index < left.parameter_count() {
+        let left_value = left.value(parameter_index)
+        let right_value = right.value(parameter_index)
+        let left_scalars = left_value.values()
+        let right_scalars = right_value.values()
+        var child:float[] = []
+        var scalar_index = 0
+        while scalar_index < left_scalars.count() {
+            if randomizer.get_bool() { child.append(left_scalars[scalar_index]) }
+            else { child.append(right_scalars[scalar_index]) }
+            scalar_index++
+        }
+        values.append(Tensor(child, left_value.shape()))
+        parameter_index++
+    }
+    return Genome(left.names(), values)
+}
+
+public func gaussian_mutation(
+    genome:&Genome,
+    randomizer:Randomizer,
+    probability:float = 0.05,
+    standard_deviation:float = 0.1
+) {
+    if !Math.is_finite(probability) || probability < 0.0 || probability > 1.0 {
+        panic("AI.Neuroevolution.gaussian_mutation requires probability in [0, 1]")
+    }
+    if !Math.is_finite(standard_deviation) || standard_deviation <= 0.0 {
+        panic("AI.Neuroevolution.gaussian_mutation requires a positive finite standard_deviation")
+    }
+    var parameter_index = 0
+    while parameter_index < genome.parameter_count() {
+        let original = genome.value(parameter_index)
+        var values = original.values()
+        var scalar_index = 0
+        while scalar_index < values.count() {
+            if randomizer.get_float() < probability {
+                values[scalar_index] += gaussian(randomizer) * standard_deviation
+                if !Math.is_finite(values[scalar_index]) {
+                    panic("AI.Neuroevolution.gaussian_mutation produced a non-finite parameter")
+                }
+            }
+            scalar_index++
+        }
+        genome.replace(parameter_index, Tensor(values, original.shape()))
+        parameter_index++
+    }
+}
+
+func require_model_compatibility(
+    genome:@Genome, parameters:Neural.Parameter[], operation:str
+) {
+    if genome.parameter_count() != parameters.count() {
+        panic("AI.Neuroevolution.Genome.$(operation) parameter count mismatch")
+    }
+    var index = 0
+    while index < parameters.count() {
+        if parameters[index].gradient() != null {
+            panic("AI.Neuroevolution.Genome.$(operation) requires model zero_grad")
+        }
+        if !parameters[index].value().is_cpu() {
+            panic("AI.Neuroevolution.Genome.$(operation) requires model.cpu")
+        }
+        if genome.name(index) != parameters[index].name() {
+            panic("AI.Neuroevolution.Genome.$(operation) parameter name mismatch")
+        }
+        if !same_shape(genome.value(index).shape(), parameters[index].value().shape()) {
+            panic("AI.Neuroevolution.Genome.$(operation) parameter shape mismatch")
+        }
+        index++
+    }
+}
+
+func require_genome_compatibility(left:@Genome, right:@Genome, operation:str) {
+    if left.parameter_count() != right.parameter_count() {
+        panic("AI.Neuroevolution.$(operation) parameter count mismatch")
+    }
+    var index = 0
+    while index < left.parameter_count() {
+        if left.name(index) != right.name(index) {
+            panic("AI.Neuroevolution.$(operation) parameter name mismatch")
+        }
+        if !same_shape(left.value(index).shape(), right.value(index).shape()) {
+            panic("AI.Neuroevolution.$(operation) parameter shape mismatch")
+        }
+        index++
+    }
+}
+
+func same_shape(left:int[], right:int[]) bool {
+    if left.count() != right.count() { return false }
+    var index = 0
+    while index < left.count() {
+        if left[index] != right[index] { return false }
+        index++
+    }
+    return true
+}
+
+func gaussian(randomizer:Randomizer) float {
+    let radius = Math.sqrt(-2.0 * Math.log(1.0 - randomizer.get_float()))
+    let angle = Math.two_pi() * randomizer.get_float()
+    return radius * Math.cos(angle)
+}

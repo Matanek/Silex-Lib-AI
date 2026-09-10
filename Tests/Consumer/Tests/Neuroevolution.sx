@@ -1,0 +1,83 @@
+use AI.Evolution
+use AI.Neuroevolution
+use STD.Randomizer
+use Tensor
+use Tensor.Neural
+
+func model(seed:int) Neural.Sequential {
+    var layers:Neural.Layer[] = [
+        Neural.Dense("hidden", 2, 3, seed),
+        Neural.Activation.tanh(),
+        Neural.Dense("output", 3, 1, seed + 1)
+    ]
+    return Neural.Sequential(layers)
+}
+
+func tensor_values_differ(left:Tensor, right:Tensor) bool {
+    let left_values = left.values()
+    let right_values = right.values()
+    var index = 0
+    while index < left_values.count() {
+        if left_values[index] != right_values[index] { return true }
+        index++
+    }
+    return false
+}
+
+test "capture cross mutate and apply fixed-topology neural genomes" {
+    var first_model = model(11)
+    var second_model = model(29)
+    var target_model = model(47)
+    let first = Neuroevolution.Genome.capture(first_model)
+    let second = Neuroevolution.Genome.capture(second_model)
+    var randomizer = Randomizer(73)
+    var child = Neuroevolution.uniform_crossover(first, second, randomizer)
+    let before_mutation = child.value(0)
+
+    Neuroevolution.gaussian_mutation(
+        child, randomizer, probability:1.0, standard_deviation:0.05
+    )
+    child.apply(target_model)
+
+    assert(child.parameter_count() == target_model.parameters().count())
+    assert(tensor_values_differ(before_mutation, child.value(0)))
+    let applied = Neuroevolution.Genome.capture(target_model)
+    var index = 0
+    while index < child.parameter_count() {
+        assert(child.name(index) == applied.name(index))
+        assert(!tensor_values_differ(child.value(index), applied.value(index)))
+        index++
+    }
+}
+
+test "drive neural genomes with the generic evolutionary engine" {
+    var evaluation_model = model(101)
+    var genomes:Neuroevolution.Genome[] = [
+        Neuroevolution.Genome.capture(model(1)),
+        Neuroevolution.Genome.capture(model(2)),
+        Neuroevolution.Genome.capture(model(3)),
+        Neuroevolution.Genome.capture(model(4))
+    ]
+    var input_values:float[] = [1.0, -1.0]
+    let input = Tensor(input_values, [1, 2])
+    let configuration = Evolution.Configuration(elite_count:1, tournament_size:2)
+    var population = Evolution.Population<Neuroevolution.Genome>(
+        genomes, 2026, configuration
+    )
+
+    let generation = population.advance(
+        func(genome:@Neuroevolution.Genome) float {
+            genome.apply(evaluation_model)
+            return -evaluation_model.forward(input).abs().sum().item()
+        },
+        Neuroevolution.uniform_crossover,
+        func(genome:&Neuroevolution.Genome, randomizer:Randomizer) {
+            Neuroevolution.gaussian_mutation(
+                genome, randomizer, probability:0.2, standard_deviation:0.02
+            )
+        }
+    )
+
+    assert(generation.count() == 4)
+    assert(population.generation() == 1)
+}
