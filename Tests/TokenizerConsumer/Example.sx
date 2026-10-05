@@ -1,0 +1,13 @@
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.load_bpe(
+        "Fixtures/vocab.json",
+        "Fixtures/merges.txt"
+    ) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("Bonjour é 世界 👩‍💻") else error { panic(error.detail) }
+    let decoded = try tokenizer.decode(encoding.ids()) else error { panic(error.detail) }
+    assert(decoded == encoding.normalized_text())
+    print(decoded)
+    print("$(encoding.count()) tokens")
+}

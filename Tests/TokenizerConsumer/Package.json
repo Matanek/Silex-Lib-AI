@@ -1,0 +1,4 @@
+{
+  "sources": "Tests",
+  "dependencies": {"AI": "^0.1.0"}
+}

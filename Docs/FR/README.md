@@ -10,6 +10,7 @@ une intégration explicite relie les génomes aux modèles `Tensor.Neural`.
 - [Faire évoluer une population](Evolution.md)
 - [Faire évoluer les paramètres d’un réseau à structure fixe](NeuroEvolution-FixedStructure.md)
 - [Faire évoluer la structure d’un réseau](NeuroEvolution-EvolvingStructure.md)
+- [Encoder et reconstruire du texte byte-level](Tokenizer.md)
 
 [Read this documentation in English.](../EN/README.md)
 

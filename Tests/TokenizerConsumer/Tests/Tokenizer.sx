@@ -1,0 +1,283 @@
+use AI.Tokenizer
+
+func loaded(vocab:str = "vocab.json", merges:str = "merges.txt") Tokenizer {
+    match Tokenizer.load_bpe(fixture(vocab), fixture(merges)) {
+        success(var tokenizer) => { return tokenizer }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+func encoded(tokenizer:Tokenizer, text:str) Tokenizer.Encoding {
+    match tokenizer.encode(text) {
+        success(value) => { return value }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "load encode inspect and decode at the public boundary" {
+    var tokenizer = loaded()
+    let encoded = encoded(tokenizer, "Bonjour é 世界 مرحبا 👩‍💻")
+    assert(encoded.normalized_text() == "Bonjour é 世界 مرحبا 👩‍💻")
+    let ids = encoded.ids()
+    match tokenizer.decode(ids) {
+        success(text) => { assert(text == encoded.normalized_text()) }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+func fixture(name:str) str { return "Packages/AI/Tests/TokenizerConsumer/Fixtures/" + name }
+
+func expect_load_error(vocab:str, merges:str, kind:Tokenizer.LoadErrorKind,
+    options:Tokenizer.LoadOptions = Tokenizer.LoadOptions()) {
+    match Tokenizer.load_bpe(fixture(vocab), fixture(merges), options) {
+        success(_) => { panic("model unexpectedly accepted") }
+        failure(error) => {
+            assert(error.kind == kind, error.detail)
+            assert(error.path == fixture(vocab) || error.path == fixture(merges))
+            assert(error.detail.count() > 0)
+        }
+    }
+}
+
+test "every byte and every ID round trips without assuming UTF8 validity" {
+    var tokenizer = loaded()
+    var ids:int[] = []
+    var index = 0
+    while index < 256 { ids.append(index); index++ }
+    match tokenizer.decode_bytes(ids) {
+        success(bytes) => {
+            assert(bytes.count() == 256)
+            var offset = 0
+            for byte in bytes { assert((byte as int) == offset); offset++ }
+        }
+        failure(error) => { panic(error.detail) }
+    }
+    match tokenizer.decode(ids) {
+        failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.invalid_utf8); assert(error.position == 128) }
+        success(_) => { panic("invalid UTF8 must not be repaired") }
+    }
+}
+
+test "byte offsets include Unicode cuts NUL and whitespace" {
+    var tokenizer = loaded()
+    let encoding = encoded(tokenizer, "a\0é🙂 e\u{301}\n\t")
+    let expected:int[] = [97, 0, 195, 169, 240, 159, 153, 130, 32, 101, 204, 129, 10, 9]
+    assert_ids(encoding.ids(), expected)
+    let pieces = encoding.pieces()
+    assert(encoding.count() == expected.count())
+    var index = 0
+    for piece in pieces {
+        assert(piece.id == expected[index])
+        assert(piece.bytes.count() == 1 && piece.bytes[0] as int == expected[index])
+        assert(piece.span!.start == index && piece.span!.end == index + 1)
+        index++
+    }
+    match tokenizer.decode(encoding.ids()) {
+        success(text) => { assert(text == encoding.normalized_text()) }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "empty encoding and empty decoding are ordinary results" {
+    var tokenizer = loaded()
+    let empty = encoded(tokenizer, "")
+    assert(empty.count() == 0 && empty.ids().count() == 0 && empty.pieces().count() == 0)
+    match tokenizer.decode([]) {
+        success(text) => { assert(text == "") }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "encoding snapshots detach IDs bytes and pieces" {
+    var tokenizer = loaded()
+    let encoding = encoded(tokenizer, "ab")
+    var ids = encoding.ids()
+    ids[0] = 99
+    var pieces = encoding.pieces()
+    var bytes = pieces[0].bytes
+    bytes[0] = 99
+    pieces.append(pieces[0])
+    assert_ids(encoding.ids(), [97, 98])
+    let retained = encoding.pieces()
+    let retained_bytes = retained[0].bytes
+    assert(retained_bytes[0] == 97)
+    assert(encoding.count() == 2)
+    var shared = tokenizer
+    assert_ids(encoded(shared, "ab").ids(), encoded(tokenizer, "ab").ids())
+}
+
+test "unknown external IDs return their position" {
+    var tokenizer = loaded()
+    let invalid_ids:int[] = [-1, 256, 9_223_372_036_854_775_807]
+    for invalid in invalid_ids {
+        let values:int[] = [97, invalid]
+        match tokenizer.decode_bytes(values) {
+            failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.unknown_id && error.position == 1) }
+            success(_) => { panic("unknown token must fail") }
+        }
+    }
+}
+
+test "decode is strict on isolated continuation overlong truncated and surrogate bytes" {
+    var tokenizer = loaded()
+    let invalid:int[][] = [[128], [192, 128], [240, 159], [237, 160, 128], [244, 144, 128, 128]]
+    for ids in invalid {
+        match tokenizer.decode(ids) {
+            failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.invalid_utf8) }
+            success(_) => { panic("invalid UTF8 accepted") }
+        }
+    }
+}
+
+test "input and output limits count bytes rather than Unicode scalars" {
+    var tokenizer = loaded()
+    match tokenizer.encode("é", Tokenizer.EncodeOptions(maximum_input_bytes:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("byte limit ignored") }
+    }
+    match tokenizer.encode("é", Tokenizer.EncodeOptions(maximum_tokens:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("token limit ignored") }
+    }
+    match tokenizer.encode("é", Tokenizer.EncodeOptions(maximum_input_bytes:2, maximum_tokens:2)) {
+        success(value) => { assert(value.count() == 2) }
+        failure(error) => { panic(error.detail) }
+    }
+    match tokenizer.decode_bytes([195, 169], Tokenizer.DecodeOptions(maximum_bytes:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.limit_exceeded && error.position == 1) }
+        success(_) => { panic("decode limit ignored") }
+    }
+    match tokenizer.decode([195, 169], Tokenizer.DecodeOptions(maximum_bytes:2)) {
+        success(text) => { assert(text == "é") }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "negative encode and decode options return errors" {
+    var tokenizer = loaded()
+    match tokenizer.encode("", Tokenizer.EncodeOptions(maximum_input_bytes:-1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options) }
+        success(_) => { panic("negative encoding limit") }
+    }
+    match tokenizer.encode("", Tokenizer.EncodeOptions(maximum_tokens:-1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options) }
+        success(_) => { panic("negative token limit") }
+    }
+    match tokenizer.decode_bytes([], Tokenizer.DecodeOptions(maximum_bytes:-1)) {
+        failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.invalid_options) }
+        success(_) => { panic("negative decoding limit") }
+    }
+}
+
+test "file parser and alphabet errors are structured" {
+    expect_load_error("absent.json", "merges.txt", Tokenizer.LoadErrorKind.io)
+    expect_load_error("vocab.json", "absent.txt", Tokenizer.LoadErrorKind.io)
+    expect_load_error("invalid.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_json)
+    expect_load_error("duplicate-key.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_json)
+    expect_load_error("not-utf8.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_vocabulary)
+    expect_load_error("array.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_vocabulary)
+    expect_load_error("incomplete.json", "merges.txt", Tokenizer.LoadErrorKind.incomplete_alphabet)
+    expect_load_error("empty-token.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_vocabulary)
+    expect_load_error("invalid-alphabet.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_vocabulary)
+}
+
+test "token IDs retain integer precision and must be bijective" {
+    for name in ["duplicate-id.json", "negative.json", "fraction.json", "huge.json", "exponent.json"] {
+        expect_load_error(name, "merges.txt", Tokenizer.LoadErrorKind.invalid_vocabulary)
+    }
+    var tokenizer = loaded("sparse.json")
+    let encoding = encoded(tokenizer, "a")
+    // IDs near int.max are legal and must never size an ID-indexed allocation.
+    assert(encoding.ids()[0] > 9_223_372_036_854_775_000)
+    match tokenizer.decode(encoding.ids()) {
+        success(text) => { assert(text == "a") }
+        failure(error) => { panic(error.detail) }
+    }
+}
+
+test "model size depth entry and token limits fail before use" {
+    expect_load_error("vocab.json", "merges.txt", Tokenizer.LoadErrorKind.limit_exceeded,
+        Tokenizer.LoadOptions(maximum_file_bytes:10))
+    expect_load_error("deep.json", "merges.txt", Tokenizer.LoadErrorKind.limit_exceeded,
+        Tokenizer.LoadOptions(maximum_json_depth:1))
+    expect_load_error("with-merge.json", "merges.txt", Tokenizer.LoadErrorKind.limit_exceeded,
+        Tokenizer.LoadOptions(maximum_vocabulary_entries:256))
+    expect_load_error("long-token.json", "merges.txt", Tokenizer.LoadErrorKind.limit_exceeded,
+        Tokenizer.LoadOptions(maximum_token_bytes:1))
+    expect_load_error("with-merge.json", "valid-merges.txt", Tokenizer.LoadErrorKind.limit_exceeded,
+        Tokenizer.LoadOptions(maximum_merge_rules:0))
+}
+
+test "invalid model limits are rejected even before opening files" {
+    expect_load_error("absent.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_options,
+        Tokenizer.LoadOptions(maximum_file_bytes:-1))
+    expect_load_error("vocab.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_options,
+        Tokenizer.LoadOptions(maximum_json_depth:0))
+    expect_load_error("vocab.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_options,
+        Tokenizer.LoadOptions(maximum_vocabulary_entries:255))
+    expect_load_error("vocab.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_options,
+        Tokenizer.LoadOptions(maximum_token_bytes:0))
+    expect_load_error("vocab.json", "merges.txt", Tokenizer.LoadErrorKind.invalid_options,
+        Tokenizer.LoadOptions(maximum_merge_rules:-1))
+}
+
+test "merges are validated and unsupported fusion models are never silently ignored" {
+    expect_load_error("vocab.json", "invalid-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
+    expect_load_error("vocab.json", "unknown-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
+    expect_load_error("with-merge.json", "duplicate-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
+    expect_load_error("with-merge.json", "extra-spaces.txt", Tokenizer.LoadErrorKind.invalid_merges)
+    expect_load_error("with-merge.json", "valid-merges.txt", Tokenizer.LoadErrorKind.unsupported_model)
+    for name in ["crlf-merges.txt", "empty-merges.txt"] {
+        match Tokenizer.load_bpe(fixture("vocab.json"), fixture(name)) {
+            success(var tokenizer) => { assert_ids(encoded(tokenizer, "a").ids(), [97]) }
+            failure(error) => { panic(error.detail) }
+        }
+    }
+}
+
+func assert_ids(actual:int[], expected:int[]) {
+    assert(actual.count() == expected.count())
+    var index = 0
+    while index < actual.count() { assert(actual[index] == expected[index]); index++ }
+}
+
+
+test "decode supports owned multibyte vocabulary pieces and checks whole token limits" {
+    var tokenizer = loaded("with-merge.json")
+    match tokenizer.decode([1000]) {
+        success(text) => { assert(text == "ab") }
+        failure(error) => { panic(error.detail) }
+    }
+    match tokenizer.decode_bytes([1000], Tokenizer.DecodeOptions(maximum_bytes:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.limit_exceeded && error.position == 0) }
+        success(_) => { panic("whole token size limit ignored") }
+    }
+    assert_ids(encoded(tokenizer, "ab").ids(), [97, 98])
+}
+
+test "invalid merge UTF8 and NUL paths are rejected without opening a truncated path" {
+    expect_load_error("vocab.json", "not-utf8-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
+    match Tokenizer.load_bpe("missing\0vocab.json", fixture("merges.txt")) {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.io && error.path == "missing\0vocab.json") }
+        success(_) => { panic("NUL path accepted") }
+    }
+}
+
+
+test "file and in memory model loading use the same validation and results" {
+    var from_memory = try Tokenizer.parse_bpe(embed_text("../Fixtures/vocab.json"), embed_text("../Fixtures/merges.txt")) else error { panic(error.detail) }
+    var from_file = loaded()
+    assert_ids(encoded(from_memory, "é🙂").ids(), encoded(from_file, "é🙂").ids())
+    match Tokenizer.parse_bpe("{", "") {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_json && error.path == null) }
+        success(_) => { panic("invalid in memory model") }
+    }
+    match Tokenizer.parse_bpe(embed_text("../Fixtures/vocab.json"), "", Tokenizer.LoadOptions(maximum_file_bytes:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.limit_exceeded) }
+        success(_) => { panic("in memory byte limit ignored") }
+    }
+    match Tokenizer.parse_bpe(embed_text("../Fixtures/with-merge.json"), "a b\n") {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.unsupported_model) }
+        success(_) => { panic("in memory merges ignored") }
+    }
+}

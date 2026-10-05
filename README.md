@@ -10,6 +10,10 @@ selection around application-defined genomes, fitness, crossover and mutation.
 feed-forward neuroevolution with innovation tracking, structural mutation,
 crossover, and speciation.
 
+`AI.Tokenizer` loads a complete byte-level vocabulary without merge rules,
+encodes text to portable token IDs and decodes bytes or strict UTF-8. This
+development surface is documented in the [tokenizer guide](Docs/EN/Tokenizer.md).
+
 Loading the root `AI` module also contributes the shared definition, the
 per-agent instance, and the empty readiness marker as
 `GFX.Resources.Behaviour`, `GFX.Components.Behaviour`, and

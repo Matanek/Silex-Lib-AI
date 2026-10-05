@@ -10,6 +10,7 @@ genomes to `Tensor.Neural` models.
 - [Evolve a population](Evolution.md)
 - [Evolve the parameters of a fixed-structure network](NeuroEvolution-FixedStructure.md)
 - [Evolve a network's structure](NeuroEvolution-EvolvingStructure.md)
+- [Encode and reconstruct byte-level text](Tokenizer.md)
 
 [Lire cette documentation en français.](../FR/README.md)
 

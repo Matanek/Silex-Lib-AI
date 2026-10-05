@@ -1,0 +1,163 @@
+use STD.Collections.Dictionary
+use STD.Text.UTF8
+
+public enum LoadErrorKind {
+    io
+    invalid_options
+    invalid_json
+    invalid_vocabulary
+    incomplete_alphabet
+    invalid_merges
+    limit_exceeded
+    unsupported_model
+}
+
+public struct LoadError {
+    let kind:LoadErrorKind
+    let path:str?
+    let detail:str
+}
+
+public struct LoadOptions {
+    let maximum_file_bytes:int = 16 * 1024 * 1024
+    let maximum_json_depth:int = 32
+    let maximum_vocabulary_entries:int = 100_000
+    let maximum_token_bytes:int = 4096
+    let maximum_merge_rules:int = 100_000
+}
+
+public struct EncodeOptions {
+    let maximum_input_bytes:int = 16 * 1024 * 1024
+    let maximum_tokens:int = 16 * 1024 * 1024
+}
+
+public enum EncodeErrorKind { invalid_options; limit_exceeded }
+public struct EncodeError {
+    let kind:EncodeErrorKind
+    let detail:str
+}
+
+public struct DecodeOptions {
+    let maximum_bytes:int = 16 * 1024 * 1024
+}
+
+public enum DecodeErrorKind { invalid_options; unknown_id; invalid_utf8; limit_exceeded }
+public struct DecodeError {
+    let kind:DecodeErrorKind
+    let position:int
+    let detail:str
+}
+
+public struct Span {
+    let start:int
+    let end:int
+}
+
+public struct Piece {
+    let id:int
+    let bytes:uint8[]
+    let span:Span?
+}
+
+public struct Encoding {
+    private let source:str
+    private let values:Piece[]
+
+    module init(source:str, values:Piece[]) {
+        self.source = source
+        self.values = values
+    }
+
+    func normalized_text() str { return self.source }
+    func count() int { return self.values.count() }
+    func pieces() Piece[] { return self.values }
+    func ids() int[] {
+        var result:int[] = []
+        for piece in self.values { result.append(piece.id) }
+        return result
+    }
+}
+
+public class Tokenizer {
+    private let byte_ids:int[]
+    private let vocabulary:Dictionary<int, uint8[]>
+
+    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>) {
+        self.byte_ids = byte_ids
+        self.vocabulary = vocabulary
+    }
+
+    static func load_bpe(vocabulary_path:str, merges_path:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
+        return load_model(vocabulary_path, merges_path, options)
+    }
+
+    static func parse_bpe(vocabulary_json:str, merges_text:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
+        return parse_model(vocabulary_json, merges_text, options, null, null)
+    }
+
+    func encode(text:str, options:EncodeOptions = EncodeOptions()) Result<Encoding, EncodeError> {
+        if options.maximum_input_bytes < 0 || options.maximum_tokens < 0 {
+            return Result<Encoding, EncodeError>.failure(EncodeError(
+                kind:EncodeErrorKind.invalid_options, detail:"encoding limits must be non-negative"
+            ))
+        }
+        // Check the encoded byte size before materializing input or output arrays.
+        let input_count = UTF8.byte_count(text)
+        if input_count > options.maximum_input_bytes || input_count > options.maximum_tokens {
+            return Result<Encoding, EncodeError>.failure(EncodeError(
+                kind:EncodeErrorKind.limit_exceeded, detail:"input exceeds the configured encoding limit"
+            ))
+        }
+        let bytes = UTF8.bytes(text)
+        var pieces:Piece[] = []
+        var index = 0
+        while index < bytes.count() {
+            let piece_bytes:uint8[] = [bytes[index]]
+            pieces.append(Piece(id:self.byte_ids[bytes[index] as int], bytes:piece_bytes,
+                span:Span(start:index, end:index + 1)))
+            index++
+        }
+        return Result<Encoding, EncodeError>.success(Encoding(text, pieces))
+    }
+
+    func decode_bytes(ids:int[], options:DecodeOptions = DecodeOptions()) Result<uint8[], DecodeError> {
+        if options.maximum_bytes < 0 {
+            return Result<uint8[], DecodeError>.failure(DecodeError(
+                kind:DecodeErrorKind.invalid_options, position:0, detail:"decoding limit must be non-negative"
+            ))
+        }
+        var result:uint8[] = []
+        var index = 0
+        for id in ids {
+            let found = self.vocabulary.find(id)
+            if found == null {
+                return Result<uint8[], DecodeError>.failure(DecodeError(
+                    kind:DecodeErrorKind.unknown_id, position:index, detail:"unknown token ID $(id)"
+                ))
+            }
+            let bytes = found!
+            if bytes.count() > options.maximum_bytes - result.count() {
+                return Result<uint8[], DecodeError>.failure(DecodeError(
+                    kind:DecodeErrorKind.limit_exceeded, position:index, detail:"decoded bytes exceed the configured limit"
+                ))
+            }
+            for byte in bytes { result.append(byte) }
+            index++
+        }
+        return Result<uint8[], DecodeError>.success(result)
+    }
+
+    func decode(ids:int[], options:DecodeOptions = DecodeOptions()) Result<str, DecodeError> {
+        let bytes = try self.decode_bytes(ids, options)
+        let view = @bytes[0:bytes.count()]
+        match UTF8.decode(view) {
+            success(text) => { return Result<str, DecodeError>.success(text) }
+            failure(error) => {
+                return Result<str, DecodeError>.failure(DecodeError(
+                    kind:DecodeErrorKind.invalid_utf8, position:error.byte_offset,
+                    detail:"decoded bytes are not valid UTF-8"
+                ))
+            }
+        }
+    }
+}

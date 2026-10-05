@@ -1,0 +1,190 @@
+use JSON
+use STD.File
+use STD.IO
+use STD.Path
+use STD.Error
+use STD.Text.UTF8
+use STD.Collections.Dictionary
+
+func load_model(vocabulary_path:str, merges_path:str, options:LoadOptions) Result<Tokenizer, LoadError> {
+    try validate_load_options(options, vocabulary_path)
+    let vocabulary_text = try read_model_file(vocabulary_path, options.maximum_file_bytes, LoadErrorKind.invalid_vocabulary)
+    let merges_text = try read_model_file(merges_path, options.maximum_file_bytes, LoadErrorKind.invalid_merges)
+    return parse_model(vocabulary_text, merges_text, options, vocabulary_path, merges_path)
+}
+
+func validate_load_options(options:LoadOptions, path:str?) Result<void, LoadError> {
+    if options.maximum_file_bytes < 0 || options.maximum_json_depth < 1 ||
+        options.maximum_vocabulary_entries < 256 || options.maximum_token_bytes < 1 ||
+        options.maximum_merge_rules < 0 {
+        return Result<void, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_options, path:path, detail:"invalid model loading limits"))
+    }
+    return Result<void, LoadError>.success()
+}
+
+func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
+    vocabulary_path:str?, merges_path:str?) Result<Tokenizer, LoadError> {
+    try validate_load_options(options, vocabulary_path)
+    if UTF8.byte_count(vocabulary_text) > options.maximum_file_bytes {
+        return load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "vocabulary exceeds the configured byte limit")
+    }
+    if UTF8.byte_count(merges_text) > options.maximum_file_bytes {
+        return load_failure(LoadErrorKind.limit_exceeded, merges_path, "merges exceed the configured byte limit")
+    }
+    var document = try JSON.try_parse(vocabulary_text, options.maximum_json_depth) else error {
+        var kind = LoadErrorKind.invalid_json
+        if error.kind == JSON.ParseErrorKind.depth_limit { kind = LoadErrorKind.limit_exceeded }
+        return load_failure(kind, vocabulary_path, error.detail)
+    }
+    if document.kind() != JSON.Kind.object {
+        return load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "vocabulary must be a JSON object")
+    }
+    if document.count() > options.maximum_vocabulary_entries {
+        return load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "too many vocabulary entries")
+    }
+    var members = document.as_object()!
+    var vocabulary = Dictionary<int, uint8[]>()
+    var symbols = Dictionary<str, int>()
+    var byte_ids:int[] = []
+    var byte_index = 0
+    while byte_index < 256 { byte_ids.append(-1); byte_index++ }
+    for member in members {
+        let id = member.value.as_integer() ?? -1
+        if id < 0 || vocabulary.contains(id) {
+            return load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "token IDs must be unique non-negative integers")
+        }
+        let bytes = try token_bytes(member.name, vocabulary_path, options.maximum_token_bytes)
+        vocabulary.set(id, bytes)
+        symbols.set(member.name, id)
+        if bytes.count() == 1 { byte_ids[bytes[0] as int] = id }
+    }
+    for id in byte_ids {
+        if id < 0 { return load_failure(LoadErrorKind.incomplete_alphabet, vocabulary_path, "vocabulary must cover all 256 bytes") }
+    }
+    let count = try validate_merges(merges_text, symbols, merges_path, options.maximum_merge_rules)
+    if count != 0 {
+        return load_failure(LoadErrorKind.unsupported_model, merges_path, "this version supports models without merge rules only")
+    }
+    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary))
+}
+
+func read_model_file(path:str, maximum_bytes:int, invalid_text:LoadErrorKind) Result<str, LoadError> {
+    try Path.validate(path) else error {
+        return Result<str, LoadError>.failure(LoadError(kind:LoadErrorKind.io, path:path, detail:error.detail))
+    }
+    var file = try File.open(path, File.OpenOptions(
+        access:File.Access.read, creation:File.Creation.open_existing, append:false
+    )) else error {
+        return Result<str, LoadError>.failure(LoadError(kind:LoadErrorKind.io, path:path, detail:error.detail))
+    }
+    let result = IO.read_to_end<File>(file, maximum_bytes)
+    let closed = File.close(move file)
+    let bytes = try result else error {
+        var kind = LoadErrorKind.io
+        if error.kind == Error.Kind.limit_exceeded { kind = LoadErrorKind.limit_exceeded }
+        return Result<str, LoadError>.failure(LoadError(kind:kind, path:path, detail:error.detail))
+    }
+    try closed else error {
+        return Result<str, LoadError>.failure(LoadError(kind:LoadErrorKind.io, path:path, detail:error.detail))
+    }
+    let view = @bytes[0:bytes.count()]
+    let text = try UTF8.decode(view) else error {
+        return Result<str, LoadError>.failure(LoadError(kind:invalid_text,
+            path:path, detail:"model file is not valid UTF-8"))
+    }
+    return Result<str, LoadError>.success(text)
+}
+
+func token_bytes(symbol:str, path:str?, maximum_bytes:int) Result<uint8[], LoadError> {
+    // Each alphabet scalar represents exactly one byte.
+    // Avoid materializing a hostile token before its configured size check.
+    if symbol.count() > maximum_bytes {
+        return Result<uint8[], LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded,
+            path:path, detail:"token exceeds the configured byte limit"))
+    }
+    let scalars = UTF8.scalars(symbol)
+    if scalars.count() == 0 {
+        return Result<uint8[], LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_vocabulary,
+            path:path, detail:"empty vocabulary token"))
+    }
+    if scalars.count() > maximum_bytes {
+        return Result<uint8[], LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded,
+            path:path, detail:"token exceeds the configured byte limit"))
+    }
+    var result:uint8[] = []
+    for scalar in scalars {
+        let byte = alphabet_byte(scalar)
+        if byte < 0 {
+            return Result<uint8[], LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_vocabulary,
+                path:path, detail:"token is outside the GPT-2 byte-level alphabet"))
+        }
+        result.append(byte as uint8)
+    }
+    return Result<uint8[], LoadError>.success(result)
+}
+
+func alphabet_byte(scalar:uint32) int {
+    if (scalar >= 33 && scalar <= 126) || (scalar >= 161 && scalar <= 172) || (scalar >= 174 && scalar <= 255) {
+        return scalar as int
+    }
+    var next:uint32 = 256
+    var byte = 0
+    while byte < 256 {
+        if !((byte >= 33 && byte <= 126) || (byte >= 161 && byte <= 172) || (byte >= 174 && byte <= 255)) {
+            if scalar == next { return byte }
+            next++
+        }
+        byte++
+    }
+    return -1
+}
+
+func validate_merges(text:str, symbols:Dictionary<str, int>, path:str?, maximum_rules:int) Result<int, LoadError> {
+    let bytes = UTF8.bytes(text)
+    var seen = Dictionary<str, bool>()
+    var start = 0
+    var cursor = 0
+    var count = 0
+    while cursor <= bytes.count() {
+        if cursor == bytes.count() || bytes[cursor] == 10 {
+            var end = cursor
+            if end > start && bytes[end - 1] == 13 { end-- }
+            if end > start {
+                let line_view = @bytes[start:end]
+                let line = try UTF8.decode(line_view) else {
+                    return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid merge line"))
+                }
+                if line != "#version: 0.2" || start != 0 {
+                    if count >= maximum_rules {
+                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded, path:path, detail:"too many merge rules"))
+                    }
+                    var separator = start
+                    while separator < end && bytes[separator] != 32 { separator++ }
+                    if separator == start || separator + 1 >= end {
+                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"expected two merge symbols separated by one space"))
+                    }
+                    let left_view = @bytes[start:separator]
+                    let right_view = @bytes[separator + 1:end]
+                    let left = try UTF8.decode(left_view) else {
+                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid left merge symbol"))
+                    }
+                    let right = try UTF8.decode(right_view) else {
+                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid right merge symbol"))
+                    }
+                    if !symbols.contains(left) || !symbols.contains(right) || !symbols.contains(left + right) || seen.contains(line) {
+                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"unknown, duplicate, or impossible merge rule"))
+                    }
+                    seen.set(line, true)
+                    count++
+                }
+            }
+            start = cursor + 1
+        }
+        cursor++
+    }
+    return Result<int, LoadError>.success(count)
+}
+
+func load_failure(kind:LoadErrorKind, path:str?, detail:str) Result<Tokenizer, LoadError> {
+    return Result<Tokenizer, LoadError>.failure(LoadError(kind:kind, path:path, detail:detail))
+}

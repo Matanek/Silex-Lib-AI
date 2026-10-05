@@ -1,0 +1,33 @@
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/vocab.json"), embed_text("Fixtures/merges.txt")) else error { panic(error.detail) }
+    let text = "a\0é 世界 مرحبا 👩‍💻 e\u{301}\n"
+    let encoding = try tokenizer.encode(text) else error { panic(error.detail) }
+    let decoded = try tokenizer.decode(encoding.ids()) else error { panic(error.detail) }
+    assert(decoded == text)
+    let ids = encoding.ids()
+    var cursor = 0
+    for piece in encoding.pieces() {
+        assert(piece.span!.start == cursor && piece.span!.end == cursor + 1)
+        assert(piece.id == ids[cursor] && piece.bytes.count() == 1)
+        print("$(piece.id):$(piece.span!.start):$(piece.span!.end)")
+        cursor++
+    }
+    var all_ids:int[] = []
+    var index = 0
+    while index < 256 { all_ids.append(index); index++ }
+    let bytes = try tokenizer.decode_bytes(all_ids) else error { panic(error.detail) }
+    index = 0
+    for byte in bytes { assert(byte as int == index); index++ }
+    assert(bytes.count() == 256)
+    match tokenizer.decode(all_ids) {
+        failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.invalid_utf8 && error.position == 128) }
+        success(_) => { panic("invalid UTF8 accepted") }
+    }
+    match Tokenizer.parse_bpe("{", "") {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_json && error.path == null) }
+        success(_) => { panic("invalid JSON accepted") }
+    }
+    print("256 bytes round trip; strict UTF8 and owned spans verified")
+}
