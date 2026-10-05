@@ -1,0 +1,128 @@
+use AI.Tokenizer
+
+func configured(mode:Tokenizer.Normalization = Tokenizer.Normalization.identity,
+    profile:Tokenizer.PreTokenizer = Tokenizer.PreTokenizer.none) Tokenizer {
+    return try Tokenizer.parse_bpe(embed_text("../Fixtures/vocab.json"), "",
+        Tokenizer.LoadOptions(normalization:mode, pre_tokenizer:profile)) else error { panic(error.detail) }
+}
+
+func check_segments(tokenizer:Tokenizer, input:str, normalized:str, expected:str[]) {
+    let encoding = try tokenizer.encode(input) else error { panic(error.detail) }
+    assert(encoding.normalized_text() == normalized)
+    let decoded = try tokenizer.decode(encoding.ids()) else error { panic(error.detail) }
+    assert(decoded == normalized)
+    let boundaries = encoding.segments()
+    assert(boundaries.count() == expected.count())
+    let ids = encoding.ids()
+    var cursor = 0
+    var segment_index = 0
+    for boundary in boundaries {
+        assert(boundary.start == cursor && boundary.end > boundary.start)
+        var segment_ids:int[] = []
+        while cursor < boundary.end { segment_ids.append(ids[cursor]); cursor++ }
+        let segment = try tokenizer.decode(segment_ids) else error { panic(error.detail) }
+        assert(segment == expected[segment_index], segment)
+        segment_index++
+    }
+    assert(cursor == encoding.count())
+    cursor = 0
+    for piece in encoding.pieces() {
+        assert(piece.span!.start == cursor && piece.span!.end == cursor + 1)
+        assert(piece.id == ids[cursor] && piece.bytes.count() == 1)
+        cursor++
+    }
+}
+
+test "identity and no pretokenization preserve the default public contract" {
+    var tokenizer = configured()
+    check_segments(tokenizer, "e\u{301} 世界 👩‍💻\0", "e\u{301} 世界 👩‍💻\0", ["e\u{301} 世界 👩‍💻\0"])
+    check_segments(tokenizer, "", "", [])
+}
+
+test "NFC composes accents and Hangul before offsets are assigned" {
+    var tokenizer = configured(Tokenizer.Normalization.nfc, Tokenizer.PreTokenizer.gpt2)
+    check_segments(tokenizer, "e\u{301}é \u{1100}\u{1161}", "éé 가", ["éé", " 가"])
+    let encoding = try tokenizer.encode("e\u{301}", Tokenizer.EncodeOptions(
+        maximum_input_bytes:3, maximum_normalized_bytes:2, maximum_tokens:2)) else error { panic(error.detail) }
+    assert(encoding.count() == 2)
+    assert(encoding.segments()[0].end == 2)
+    assert(encoding.pieces()[1].span!.start == 1)
+    let already = try tokenizer.encode("é") else error { panic(error.detail) }
+    assert(encoding.ids()[0] == already.ids()[0] && encoding.ids()[1] == already.ids()[1])
+}
+
+test "NFKC changes ligatures width numerals and segmentation consistently" {
+    var tokenizer = configured(Tokenizer.Normalization.nfkc, Tokenizer.PreTokenizer.gpt2)
+    check_segments(tokenizer, "ﬁ ＡＢＣ ① ¼", "fi ABC 1 1⁄4", ["fi", " ABC", " 1", " 1", "⁄", "4"])
+    var canonical = configured(Tokenizer.Normalization.nfc, Tokenizer.PreTokenizer.gpt2)
+    check_segments(canonical, "ﬁ ＡＢＣ ①", "ﬁ ＡＢＣ ①", ["ﬁ", " ＡＢＣ", " ①"])
+}
+
+test "GPT2 contractions are ordered and case sensitive without a prefix space" {
+    var tokenizer = configured(Tokenizer.Normalization.identity, Tokenizer.PreTokenizer.gpt2)
+    check_segments(tokenizer, "I'm I'M he'll SHE'S don't I've we'd", "I'm I'M he'll SHE'S don't I've we'd",
+        ["I", "'m", " I", "'", "M", " he", "'ll", " SHE", "'", "S", " don", "'t", " I", "'ve", " we", "'d"])
+    check_segments(tokenizer, "we're  ici\n\t ", "we're  ici\n\t ", ["we", "'re", " ", " ici", "\n\t "])
+}
+
+test "GPT2 Unicode letters numbers and symbols use full categories" {
+    var tokenizer = configured(Tokenizer.Normalization.identity, Tokenizer.PreTokenizer.gpt2)
+    let input = "Hello, 世界 １２３ Ⅳ² مرحبا 👩‍💻!"
+    check_segments(tokenizer, input, input, ["Hello", ",", " 世界", " １２３", " Ⅳ²", " مرحبا", " 👩‍💻!"])
+    check_segments(tokenizer, "e\u{301}é", "e\u{301}é", ["e", "\u{301}", "é"])
+    check_segments(tokenizer, "a\0b", "a\0b", ["a", "\0", "b"])
+}
+
+test "GPT2 preserves leading inner trailing and mixed whitespace exactly" {
+    var tokenizer = configured(Tokenizer.Normalization.identity, Tokenizer.PreTokenizer.gpt2)
+    check_segments(tokenizer, "  hello  ", "  hello  ", [" ", " hello", "  "])
+    check_segments(tokenizer, " \tx", " \tx", [" ", "\t", "x"])
+    check_segments(tokenizer, " \t x", " \t x", [" \t", " x"])
+    check_segments(tokenizer, "\r\nx\n\n", "\r\nx\n\n", ["\r", "\n", "x", "\n\n"])
+    check_segments(tokenizer, " \t\r\n", " \t\r\n", [" \t\r\n"])
+    check_segments(tokenizer, "", "", [])
+    let input = "a\u{a0}b\u{85}c\u{2003}d\u{202f}e\u{feff}f"
+    check_segments(tokenizer, input, input, ["a", "\u{a0}", "b", "\u{85}", "c", "\u{2003}", "d", "\u{202f}", "e", "\u{feff}", "f"])
+}
+
+test "normalization and segment snapshots remain owned and immutable" {
+    var plain = configured()
+    var normal = configured(Tokenizer.Normalization.nfkc, Tokenizer.PreTokenizer.gpt2)
+    let input = "ﬁ  x"
+    let encoding = try normal.encode(input) else error { panic(error.detail) }
+    var boundaries = encoding.segments()
+    boundaries[0] = Tokenizer.Span(start:0, end:1)
+    boundaries.append(boundaries[0])
+    assert(encoding.segments().count() == 3)
+    assert(encoding.segments()[0].end == 2)
+    check_segments(plain, input, input, [input])
+    var shared = normal
+    check_segments(shared, input, "fi  x", ["fi", " ", " x"])
+    assert(encoding.normalized_text() == "fi  x")
+}
+
+test "raw normalized and token limits distinguish shrinking and expanding forms" {
+    var tokenizer = configured(Tokenizer.Normalization.nfkc, Tokenizer.PreTokenizer.gpt2)
+    let shrunk = try tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(
+        maximum_input_bytes:3, maximum_normalized_bytes:2, maximum_tokens:2)) else error { panic(error.detail) }
+    assert(shrunk.normalized_text() == "fi")
+    match tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_input_bytes:2)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("raw input limit ignored") }
+    }
+    match tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_normalized_bytes:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("normalized byte limit ignored") }
+    }
+    match tokenizer.encode("¼", Tokenizer.EncodeOptions(maximum_tokens:3)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("expanded token limit ignored") }
+    }
+    match tokenizer.encode("", Tokenizer.EncodeOptions(maximum_normalized_bytes:-1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options) }
+        success(_) => { panic("negative normalized limit ignored") }
+    }
+    let empty = try tokenizer.encode("", Tokenizer.EncodeOptions(
+        maximum_input_bytes:0, maximum_normalized_bytes:0, maximum_tokens:0)) else error { panic(error.detail) }
+    assert(empty.count() == 0 && empty.segments().count() == 0)
+}

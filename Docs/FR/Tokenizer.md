@@ -1,10 +1,11 @@
 # Encoder et reconstruire du texte byte-level
 
 `AI.Tokenizer` charge un alphabet byte-level immuable, encode du texte UTF-8
-en IDs `int[]` et reconstruit les octets ou le texte exact. Cette première
-surface prend en charge les modèles **sans règle de fusion**, la normalisation
-`identity` et aucun pré-découpage. Un modèle contenant des fusions est refusé
-avec `LoadErrorKind.unsupported_model` : ses règles ne sont jamais ignorées.
+en IDs `int[]` et reconstruit les octets ou le texte normalisé. Les modèles
+**sans règle de fusion** sont pris en charge avec normalisation `identity`
+(par défaut), NFC ou NFKC, et pré-tokenisation `none` (par défaut) ou `gpt2`.
+Un modèle contenant des fusions est refusé avec `LoadErrorKind.unsupported_model` :
+ses règles ne sont jamais ignorées.
 
 ## Charger, encoder et décoder
 
@@ -47,7 +48,8 @@ silex test Packages/AI/Tests/TokenizerConsumer
 ```
 
 La qualification de développement utilise les candidats AI et STD. Les nouveaux
-appels `Dictionary.find` et `Text.UTF8.byte_count` doivent être disponibles dans
+appels `Dictionary.find`, `Text.UTF8.byte_count` et les nouvelles capacités Regex
+doivent être disponibles dans
 la version de STD choisie lors de la publication ; cette surface ne prétend pas
 être installable depuis le tag AI 0.1.0 déjà existant.
 
@@ -64,12 +66,75 @@ incorpore le même alphabet et vérifie IDs, spans, 256 octets et décodage stri
 La qualification compare sa sortie dans l’interpréteur de référence et dans les
 binaires Debug/Release ; le chargement depuis le système de fichiers reste natif.
 
+## Choisir la normalisation et le découpage du modèle
+
+Les champs `LoadOptions.normalization` et `pre_tokenizer` fixent les choix à la
+création du modèle ; ils restent immuables durant ses encodages. Gardez la
+configuration employée lors de l’entraînement du modèle. NFC compose les
+équivalents canoniques ; NFKC transforme aussi les formes de compatibilité,
+par exemple `ﬁ` en `fi`, `Ａ` en `A` et `¼` en `1⁄4`. Le décodage restitue le
+texte normalisé ; ces transformations ne permettent pas de retrouver la forme
+originale. Les tables proviennent de `STD.Text`, Unicode 17.0.0.
+
+Ce [programme exécutable](../../Tests/TokenizerConsumer/TextPipelineExample.sx)
+normalise puis inspecte les frontières du profil GPT-2 :
+
+```sx
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/vocab.json"), "",
+        Tokenizer.LoadOptions(normalization:Tokenizer.Normalization.nfkc,
+            pre_tokenizer:Tokenizer.PreTokenizer.gpt2)) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("ﬁ  世界") else error { panic(error.detail) }
+    print(encoding.normalized_text())
+    for segment in encoding.segments() { print("$(segment.start):$(segment.end)") }
+}
+```
+
+Sortie :
+
+```text
+fi  世界
+0:2
+2:3
+3:10
+```
+
+`encoding.segments()` rend une liste détachée de `Span`, couvrant le texte
+normalisé de manière contiguë. `none` produit un segment sur toute l’entrée
+non vide ; `gpt2` produit les frontières ci-dessous. Une entrée vide n’a aucun
+segment. Sans fusion, chaque octet reste un token, quel que soit ce découpage.
+
+### Profil GPT-2 exact
+
+Le motif ordonné, sensible à la casse, vient de
+[Transformers 2.10.0](https://huggingface.co/transformers/v2.10.0/_modules/transformers/tokenization_gpt2.html) :
+
+```text
+'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+
+```
+
+`L` et `N` désignent les catégories Unicode complètes ; `N` inclut les nombres
+non décimaux. `\s` suit `White_Space` Unicode 17.0.0, et `\S` son complément.
+L’espace optionnel avant mots, nombres ou symboles est uniquement U+0020.
+Aucun espace initial n’est ajouté et aucun espace n’est supprimé. Ainsi
+`we're  ici` produit `we`, `'re`, ` ` et ` ici` ; les contractions en majuscules
+ne sont pas reconnues par les alternatives minuscules.
+
+Le motif est compilé une fois lors du chargement par `STD.Regex`. L’assertion
+négative `(?!\S)` est évaluée exactement sur le scalaire suivant. Les 25
+caractères `White_Space`, NUL, marques combinantes et emoji/ZWJ font partie des
+fixtures ; FEFF et 001C ne sont pas des blancs Unicode. La référence de fixtures
+indépendante Node utilise Unicode 16.0 sur des caractères stables sélectionnés :
+elle qualifie ce corpus, pas le tokenizer GPT-2 complet ni toute Unicode 17.
+
 ## Inspecter l’encodage
 
 `encoding.ids()` rend une liste détachée utilisable par une frontière de modèle.
 `encoding.pieces()` rend des valeurs `Piece` avec `id`, `bytes` et `span` ;
 `encoding.count()` compte les tokens. `normalized_text()` donne le texte auquel
-les spans se rapportent, ici exactement l’entrée.
+les spans se rapportent, après la normalisation choisie.
 
 Un `Span` est un intervalle `[start, end)` en **octets UTF-8**, pas en scalaires,
 UTF-16 ou graphèmes. Par exemple, `é` produit deux morceaux d’un octet, de spans
@@ -100,16 +165,21 @@ et règles à 100 000, et chaque token à 4 096 octets. Les champs sont configur
 La lecture est bornée même si un fichier grandit ; les limites d’entrées sont
 contrôlées après l’analyse JSON, déjà bornée par taille et profondeur.
 
-`EncodeOptions` borne les octets d’entrée à 16 MiB et le nombre de tokens à 16 Mi
-par défaut ; `DecodeOptions` borne les octets de sortie à 16 MiB. Les limites
+`EncodeOptions` borne les octets d’entrée et du texte normalisé à 16 MiB chacun
+(`maximum_input_bytes`, `maximum_normalized_bytes`), et les tokens à 16 Mi par
+défaut ; `DecodeOptions` borne les octets de sortie à 16 MiB. Les limites
 négatives renvoient une erreur d’options. Les appels sans options gardent ces
-valeurs par défaut. L’encodage compte les octets avant de matérialiser les listes,
-et le décodage vérifie la capacité restante avant d’ajouter un token.
+valeurs par défaut. La taille brute est vérifiée avant la normalisation, puis la
+taille normalisée
+avant le découpage et les tokens. La normalisation peut créer ses résultats
+intermédiaires avant ce second contrôle ; le volume reste borné par l’entrée
+et les tables Unicode. Le décodage vérifie la capacité restante avant d’ajouter un
+token.
 
 ## Compatibilité de cette première surface
 
-NFC/NFKC, pré-tokenisation GPT-2, fusions BPE, tokens spéciaux et BOS/EOS ne sont
-pas encore disponibles. Le nom byte-level décrit l’alphabet et l’aller-retour ;
+Les fusions BPE, tokens spéciaux et BOS/EOS ne sont pas encore disponibles. Le nom
+byte-level décrit l’alphabet et l’aller-retour ;
 il ne constitue pas une qualification différentielle du pipeline GPT-2 complet.
 Aucun entraînement, téléchargement de modèle, padding, batching ou conversion
 tensorielle n’est fourni. Les modèles restent des fichiers appartenant à

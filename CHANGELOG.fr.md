@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Ajouter les choix immuables `identity`/NFC/NFKC et `none`/GPT-2 au chargement ;
+  exposer les spans de segments du texte normalisé et borner sa taille séparément.
+
 - Ajouter `AI.Tokenizer` pour charger un alphabet byte-level complet sans fusion,
   analyser aussi un modèle en mémoire, encoder en IDs portables et décoder les
   octets ou du UTF-8 strict. Encodages

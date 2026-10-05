@@ -11,7 +11,8 @@ feed-forward neuroevolution with innovation tracking, structural mutation,
 crossover, and speciation.
 
 `AI.Tokenizer` loads a complete byte-level vocabulary without merge rules,
-encodes text to portable token IDs and decodes bytes or strict UTF-8. This
+normalizes and segments text before encoding portable token IDs, and decodes
+bytes or strict UTF-8. This
 development surface is documented in the [tokenizer guide](Docs/EN/Tokenizer.md).
 
 Loading the root `AI` module also contributes the shared definition, the

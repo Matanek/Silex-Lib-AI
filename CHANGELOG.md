@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Add immutable identity/NFC/NFKC and none/GPT-2 loading choices, expose
+  normalized segment spans, and bound normalized size separately.
+
 - Add `AI.Tokenizer` to load a complete byte-level alphabet without merges,
   parse the same model from memory, encode portable IDs and decode exact bytes
   or strict UTF-8. Owned encodings

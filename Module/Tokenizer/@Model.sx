@@ -1,5 +1,6 @@
 use STD.Collections.Dictionary
 use STD.Text.UTF8
+use STD.Regex
 
 public enum LoadErrorKind {
     io
@@ -18,17 +19,23 @@ public struct LoadError {
     let detail:str
 }
 
+public enum Normalization { identity; nfc; nfkc }
+public enum PreTokenizer { none; gpt2 }
+
 public struct LoadOptions {
     let maximum_file_bytes:int = 16 * 1024 * 1024
     let maximum_json_depth:int = 32
     let maximum_vocabulary_entries:int = 100_000
     let maximum_token_bytes:int = 4096
     let maximum_merge_rules:int = 100_000
+    let normalization:Normalization = Normalization.identity
+    let pre_tokenizer:PreTokenizer = PreTokenizer.none
 }
 
 public struct EncodeOptions {
     let maximum_input_bytes:int = 16 * 1024 * 1024
     let maximum_tokens:int = 16 * 1024 * 1024
+    let maximum_normalized_bytes:int = 16 * 1024 * 1024
 }
 
 public enum EncodeErrorKind { invalid_options; limit_exceeded }
@@ -62,15 +69,18 @@ public struct Piece {
 public struct Encoding {
     private let source:str
     private let values:Piece[]
+    private let boundaries:Span[]
 
-    module init(source:str, values:Piece[]) {
+    module init(source:str, values:Piece[], boundaries:Span[]) {
         self.source = source
         self.values = values
+        self.boundaries = boundaries
     }
 
     func normalized_text() str { return self.source }
     func count() int { return self.values.count() }
     func pieces() Piece[] { return self.values }
+    func segments() Span[] { return self.boundaries }
     func ids() int[] {
         var result:int[] = []
         for piece in self.values { result.append(piece.id) }
@@ -81,10 +91,14 @@ public struct Encoding {
 public class Tokenizer {
     private let byte_ids:int[]
     private let vocabulary:Dictionary<int, uint8[]>
+    private let normalization:Normalization
+    private let splitter:Regex?
 
-    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>) {
+    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>, normalization:Normalization, splitter:Regex?) {
         self.byte_ids = byte_ids
         self.vocabulary = vocabulary
+        self.normalization = normalization
+        self.splitter = splitter
     }
 
     static func load_bpe(vocabulary_path:str, merges_path:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
@@ -96,28 +110,39 @@ public class Tokenizer {
     }
 
     func encode(text:str, options:EncodeOptions = EncodeOptions()) Result<Encoding, EncodeError> {
-        if options.maximum_input_bytes < 0 || options.maximum_tokens < 0 {
+        if options.maximum_input_bytes < 0 || options.maximum_normalized_bytes < 0 || options.maximum_tokens < 0 {
             return Result<Encoding, EncodeError>.failure(EncodeError(
                 kind:EncodeErrorKind.invalid_options, detail:"encoding limits must be non-negative"
             ))
         }
         // Check the encoded byte size before materializing input or output arrays.
         let input_count = UTF8.byte_count(text)
-        if input_count > options.maximum_input_bytes || input_count > options.maximum_tokens {
+        if input_count > options.maximum_input_bytes {
             return Result<Encoding, EncodeError>.failure(EncodeError(
                 kind:EncodeErrorKind.limit_exceeded, detail:"input exceeds the configured encoding limit"
             ))
         }
-        let bytes = UTF8.bytes(text)
+        let source = normalize_text(text, self.normalization)
+        let normalized_count = UTF8.byte_count(source)
+        if normalized_count > options.maximum_normalized_bytes || normalized_count > options.maximum_tokens {
+            return Result<Encoding, EncodeError>.failure(EncodeError(
+                kind:EncodeErrorKind.limit_exceeded, detail:"normalized text exceeds the configured encoding limit"
+            ))
+        }
+        let boundaries = text_segments(source, self.splitter)
+        let bytes = UTF8.bytes(source)
         var pieces:Piece[] = []
         var index = 0
-        while index < bytes.count() {
-            let piece_bytes:uint8[] = [bytes[index]]
-            pieces.append(Piece(id:self.byte_ids[bytes[index] as int], bytes:piece_bytes,
-                span:Span(start:index, end:index + 1)))
-            index++
+        for boundary in boundaries {
+            index = boundary.start
+            while index < boundary.end {
+                let piece_bytes:uint8[] = [bytes[index]]
+                pieces.append(Piece(id:self.byte_ids[bytes[index] as int], bytes:piece_bytes,
+                    span:Span(start:index, end:index + 1)))
+                index++
+            }
         }
-        return Result<Encoding, EncodeError>.success(Encoding(text, pieces))
+        return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))
     }
 
     func decode_bytes(ids:int[], options:DecodeOptions = DecodeOptions()) Result<uint8[], DecodeError> {

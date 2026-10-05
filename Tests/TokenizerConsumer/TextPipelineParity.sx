@@ -1,0 +1,47 @@
+use AI.Tokenizer
+
+// Selected fixtures independently evaluated by Node/V8, not a full BPE oracle.
+func main() {
+    let inputs:str[] = ["",
+        "we're  ici\n\t ",
+        "I'm I'M he'll SHE'S don't I've we'd",
+        "Hello, 世界 １２３ Ⅳ² مرحبا 👩‍💻!",
+        "éé",
+        "a\u{0000}b",
+        "  hello  ",
+        " \tx",
+        " \t x",
+        "\r\nx\n\n",
+        " \t\r\n",
+        "a b\u{85}c d e\u{feff}f",
+        "éé 가",
+        "ﬁ ＡＢＣ ① ¼",
+        "ﷺ",
+        "\t\n\u{000b}\u{000c}\r \u{85}             \u{2028}\u{2029}  　",
+        "a\u{001c}b​c᠎d"]
+    let modes:Tokenizer.Normalization[] = [Tokenizer.Normalization.identity, Tokenizer.Normalization.nfc, Tokenizer.Normalization.nfkc]
+    let profiles:Tokenizer.PreTokenizer[] = [Tokenizer.PreTokenizer.none, Tokenizer.PreTokenizer.gpt2]
+    var mode_index = 0
+    for mode in modes {
+        var profile_index = 0
+        for profile in profiles {
+            var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/vocab.json"), "",
+                Tokenizer.LoadOptions(normalization:mode, pre_tokenizer:profile)) else error { panic(error.detail) }
+            var case_index = 0
+            for input in inputs {
+                let encoding = try tokenizer.encode(input) else error { panic(error.detail) }
+                let decoded = try tokenizer.decode(encoding.ids()) else error { panic(error.detail) }
+                assert(decoded == encoding.normalized_text())
+                print("case $(mode_index):$(profile_index):$(case_index)")
+                print("bytes $(encoding.count())")
+                for piece in encoding.pieces() {
+                    print("$(piece.id):$(piece.span!.start):$(piece.span!.end)")
+                }
+                for boundary in encoding.segments() { print("segment $(boundary.start):$(boundary.end)") }
+                case_index++
+            }
+            profile_index++
+        }
+        mode_index++
+    }
+}

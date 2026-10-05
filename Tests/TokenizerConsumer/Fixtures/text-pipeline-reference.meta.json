@@ -1,0 +1,11 @@
+{
+  "node": "v23.2.0",
+  "unicode": "16.0",
+  "v8": "12.9.202.28-node.11",
+  "originalPattern": "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+",
+  "referencePattern": "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\p{White_Space}\\p{L}\\p{N}]+|\\p{White_Space}+(?!\\P{White_Space})|\\p{White_Space}+",
+  "cases": 17,
+  "configurations": 6,
+  "source": "https://huggingface.co/transformers/v2.10.0/_modules/transformers/tokenization_gpt2.html",
+  "scope": "Selected stable-character pre-tokenization and normalization fixtures; not a complete BPE/tokenizer oracle."
+}

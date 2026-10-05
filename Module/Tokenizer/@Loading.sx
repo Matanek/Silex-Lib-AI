@@ -65,7 +65,8 @@ func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
     if count != 0 {
         return load_failure(LoadErrorKind.unsupported_model, merges_path, "this version supports models without merge rules only")
     }
-    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary))
+    let splitter = try compile_splitter(options.pre_tokenizer, vocabulary_path)
+    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter))
 }
 
 func read_model_file(path:str, maximum_bytes:int, invalid_text:LoadErrorKind) Result<str, LoadError> {

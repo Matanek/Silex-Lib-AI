@@ -1,0 +1,10 @@
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/vocab.json"), "",
+        Tokenizer.LoadOptions(normalization:Tokenizer.Normalization.nfkc,
+            pre_tokenizer:Tokenizer.PreTokenizer.gpt2)) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("ﬁ  世界") else error { panic(error.detail) }
+    print(encoding.normalized_text())
+    for segment in encoding.segments() { print("$(segment.start):$(segment.end)") }
+}

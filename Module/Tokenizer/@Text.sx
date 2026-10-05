@@ -1,0 +1,33 @@
+use STD.Text
+use STD.Text.UTF8
+use STD.Regex
+
+func normalize_text(text:str, mode:Normalization) str {
+    match mode {
+        identity => { return text }
+        nfc => { return Text.normalize(text, Text.Normalization.nfc) }
+        nfkc => { return Text.normalize(text, Text.Normalization.nfkc) }
+    }
+}
+
+func compile_splitter(profile:PreTokenizer, path:str?) Result<Regex?, LoadError> {
+    if profile == PreTokenizer.none { return Result<Regex?, LoadError>.success(null) }
+    // GPT-2 ordered, case-sensitive alternatives. Space prefixes are ASCII only.
+    let pattern = "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"
+    let expression = try Regex.compile(pattern) else error {
+        return Result<Regex?, LoadError>.failure(LoadError(kind:LoadErrorKind.unsupported_model,
+            path:path, detail:"GPT-2 pre-tokenization is unavailable: " + error.detail))
+    }
+    return Result<Regex?, LoadError>.success(expression)
+}
+
+func text_segments(text:str, splitter:Regex?) Span[] {
+    var result:Span[] = []
+    if text == "" { return result }
+    if expression = splitter {
+        for found in expression.find(text) {
+            result.append(Span(start:found.byte_start(), end:found.byte_end()))
+        }
+    } else { result.append(Span(start:0, end:UTF8.byte_count(text))) }
+    return result
+}
