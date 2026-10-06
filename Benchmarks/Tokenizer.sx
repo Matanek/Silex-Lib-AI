@@ -62,13 +62,19 @@ func naive(bytes:@uint8[], spans:@Tokenizer.Span[], rules:@Rule[], controls:bool
     return result
 }
 
-func measured_encode(model:Tokenizer, input:str, profile:str, size:int, round:int) Tokenizer.Encoding {
+func measured_encode(model:Tokenizer, input:str, profile:str, size:int, round:int, stage:str = "encode") Tokenizer.Encoding {
     var timer = Stopwatch()
     timer.start()
-    let encoded = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1001]))) else error {panic(error.detail)}
+    var encoded:Tokenizer.Encoding? = null
+    var checksum = 0
+    for iteration in 0...16 {
+        encoded = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1001]))) else error {panic(error.detail)}
+        checksum += encoded!.count()
+    }
     timer.stop()
-    print("encode,$(profile),$(size),$(round),$(encoded.count()),$(timer.get_elapsed_milliseconds() * 1000.0)")
-    return encoded
+    assert(checksum == encoded!.count() * 16)
+    print("$(stage),$(profile),$(size),$(round),$(encoded!.count()),$(timer.get_elapsed_milliseconds() * 1000.0 / 16.0)")
+    return encoded!
 }
 
 func measured_naive(bytes:@uint8[], spans:@Tokenizer.Span[], rules:@Rule[], profile:str, size:int, round:int) int[] {
@@ -140,9 +146,15 @@ func main() {
                     expected = measured_naive(bytes, spans, reference_rules, profile, bytes.count(), round)
                     encoded = measured_encode(model, input, profile, bytes.count(), round)
                 }
+                let control = measured_encode(model, input, profile, bytes.count(), round, "encode_control")
                 let ids = encoded!.ids()
+                let control_ids = control.ids()
                 assert(ids.count() == expected.count())
-                for index in 0...ids.count() {assert(ids[index] == expected[index], "benchmark ID $(index)")}
+                assert(control_ids.count() == expected.count())
+                for index in 0...ids.count() {
+                    assert(ids[index] == expected[index], "benchmark ID $(index)")
+                    assert(control_ids[index] == expected[index], "control ID $(index)")
+                }
                 assert((try model.decode(ids) else error {panic(error.detail)}) == input)
             }
         }

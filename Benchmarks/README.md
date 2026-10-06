@@ -19,7 +19,7 @@ uses Unix process controls and requires macOS or Linux. The compiled Silex
 workload has no Python dependency.
 
 Smoke uses UTF-8 byte budgets of 16 and 32 per input profile, checks exact IDs and
-roundtrips, and writes 175 CSV samples per mode. Its timings do not qualify
+roundtrips, and writes 245 CSV samples per mode. Its timings do not qualify
 growth. The native binary also defaults to smoke; `--full` explicitly selects
 the intensive workload. Python is only a development runner, not a tokenizer
 dependency.
@@ -36,11 +36,17 @@ byte fallback, equal-rank repeated pairs, alternating pairs, multibyte text,
 GPT-2 segmentation, literal controls and a long false control prefix. Both
 control surfaces are configured in every model, including raw fallback.
 
-Full doubles UTF-8 byte budgets from 256 through 8192, producing 455 CSV samples
+Full doubles UTF-8 byte budgets from 256 through 8192, producing 665 CSV samples
 per mode. Whole units are repeated up to each budget; `bytes` records actual
 UTF-8 bytes, which can be slightly smaller than the budget. This keeps Unicode
 and ASCII workloads comparable and bounds the deliberately quadratic reference.
-Five paired repetitions alternate production/reference order. Fresh model
+Five paired repetitions alternate production/reference order. Encoding measures
+16 calls per sample and reports their mean time, retaining a token-count checksum.
+After each pair, an identical batch produces `encode_control`; its IDs are
+checked against the same reference. Compare this witness to `encode` before
+interpreting growth: order-dependent drift or large dispersion can make a
+performance verdict indeterminate. Do not discard unfavorable samples.
+Fresh model
 construction parses embedded memory into a new immutable model; file I/O and
 cold OS caches are excluded. Encoding reuses a model and warms each size once.
 The output records compiler/binary/source hashes, machine configuration, raw

@@ -98,6 +98,7 @@ def main():
                     smoke=args.smoke, nice=args.nice, cpu_seconds=args.cpu_seconds,
                     timeout=args.timeout,
                     sizes='UTF-8 byte budgets; whole repeated units rounded down',
+                    encode_batch=16, control='identical encode batch after paired measurements',
                     load='fresh parse_bpe from embedded memory; file I/O and OS cold cache excluded',
                     encode='reused model, warmup per size; alternating paired order',
                     reference='naive merges over production segments; excludes segmentation',
@@ -116,7 +117,7 @@ def main():
             run_bounded(command, workspace, env, args.timeout, args.cpu_seconds, args.nice, stdout, stderr)
         with raw.open() as stream:
             rows = list(csv.DictReader(stream))
-        expected_count = 175 if args.smoke else 455
+        expected_count = 245 if args.smoke else 665
         assert len(rows) == expected_count, 'incomplete campaign'
         groups = {}
         for row in rows:
