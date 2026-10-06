@@ -97,6 +97,7 @@ def main():
                     builds=builds, repetitions=5, workspace=str(workspace), complete=False,
                     smoke=args.smoke, nice=args.nice, cpu_seconds=args.cpu_seconds,
                     timeout=args.timeout,
+                    sizes='UTF-8 byte budgets; whole repeated units rounded down',
                     load='fresh parse_bpe from embedded memory; file I/O and OS cold cache excluded',
                     encode='reused model, warmup per size; alternating paired order',
                     reference='naive merges over production segments; excludes segmentation',

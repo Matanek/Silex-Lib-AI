@@ -18,7 +18,7 @@ precedence; it does not impose a CPU utilization percentage. The Python runner
 uses Unix process controls and requires macOS or Linux. The compiled Silex
 workload has no Python dependency.
 
-Smoke uses 16 and 32 repetitions per input profile, checks exact IDs and
+Smoke uses UTF-8 byte budgets of 16 and 32 per input profile, checks exact IDs and
 roundtrips, and writes 175 CSV samples per mode. Its timings do not qualify
 growth. The native binary also defaults to smoke; `--full` explicitly selects
 the intensive workload. Python is only a development runner, not a tokenizer
@@ -36,8 +36,10 @@ byte fallback, equal-rank repeated pairs, alternating pairs, multibyte text,
 GPT-2 segmentation, literal controls and a long false control prefix. Both
 control surfaces are configured in every model, including raw fallback.
 
-Full doubles repetition counts from 256 through 8192, producing 455 CSV samples
-per mode. `bytes` records actual UTF-8 bytes, which differ between profiles.
+Full doubles UTF-8 byte budgets from 256 through 8192, producing 455 CSV samples
+per mode. Whole units are repeated up to each budget; `bytes` records actual
+UTF-8 bytes, which can be slightly smaller than the budget. This keeps Unicode
+and ASCII workloads comparable and bounds the deliberately quadratic reference.
 Five paired repetitions alternate production/reference order. Fresh model
 construction parses embedded memory into a new immutable model; file I/O and
 cold OS caches are excluded. Encoding reuses a model and warms each size once.

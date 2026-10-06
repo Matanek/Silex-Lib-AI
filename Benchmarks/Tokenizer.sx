@@ -123,7 +123,9 @@ func main() {
             if profile == "unicode" {unit = "é🙂"}
             if profile == "gpt2" {unit = "abc 123! é🙂\n"}
             if profile == "controls" {unit = "abc<ctrl>"}
-            let input = repeated(unit, size)
+            // Comparable UTF-8 byte budgets across every profile.
+            let units = size / UTF8.byte_count(unit)
+            let input = repeated(unit, units)
             let bytes = UTF8.bytes(input)
             let warm = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1001]))) else error {panic(error.detail)}
             let spans = warm.segments()
