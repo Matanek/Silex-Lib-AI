@@ -10,8 +10,8 @@ python3 Packages/AI/Benchmarks/RunTokenizer.py \
 ```
 
 The runner builds Debug and Release sequentially before running them sequentially.
-It lowers process priority by 15, limits each process to 60 CPU seconds and each
-build or execution to 90 wall seconds. A timeout or interruption terminates the
+It uses one Silex compilation worker, lowers process priority by 15, and limits
+each process to 60 CPU seconds and each build or execution to 90 wall seconds. A timeout or interruption terminates the
 active process group, including compiler children. A failed or interrupted run
 never produces a completed campaign. Priority reduction gives other work
 precedence; it does not impose a CPU utilization percentage. The Python runner

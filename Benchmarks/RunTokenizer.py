@@ -81,6 +81,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env['ZIG_GLOBAL_CACHE_DIR'] = str(workspace/'.silex/zig-global')
+    env['SILEX_COMPILATION_WORKERS'] = '1'
     modes = ('debug', 'release') if args.mode == 'both' else (args.mode,)
     binaries = {mode: workspace/f'.silex/tokenizer-benchmark-{mode}' for mode in modes}
     builds = []
@@ -95,7 +96,7 @@ def main():
                     ai_head=command_output(['git', '-C', str(package), 'rev-parse', 'HEAD']),
                     ai_status=command_output(['git', '-C', str(package), 'status', '--short']),
                     builds=builds, repetitions=5, workspace=str(workspace), complete=False,
-                    smoke=args.smoke, nice=args.nice, cpu_seconds=args.cpu_seconds,
+                    smoke=args.smoke, nice=args.nice, compilation_workers=1, cpu_seconds=args.cpu_seconds,
                     timeout=args.timeout,
                     sizes='UTF-8 byte budgets; whole repeated units rounded down',
                     encode_batch=16, control='identical encode batch after paired measurements',
