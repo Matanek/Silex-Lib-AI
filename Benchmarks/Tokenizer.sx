@@ -1,0 +1,148 @@
+use AI.Tokenizer
+use STD.Time.Stopwatch
+use STD.Text.UTF8
+use STD.Process
+
+struct Rule { let left:int; let right:int; let id:int; let rank:int }
+
+func repeated(unit:str, count:int) str {
+    var result = ""
+    var block = unit
+    var remaining = count
+    while remaining > 0 {
+        if remaining % 2 == 1 {result += block}
+        remaining /= 2
+        if remaining > 0 {block += block}
+    }
+    return result
+}
+
+// Deliberately rescan and reconstruct the whole sequence at each merge.
+func naive_segment(bytes:@uint8[], start:int, end:int, rules:@Rule[]) int[] {
+    var ids:int[] = []
+    for index in start...end {ids.append(bytes[index] as int)}
+    while ids.count() > 1 {
+        var position = -1
+        var selected = -1
+        var rank = 9223372036854775807
+        var index = 0
+        while index + 1 < ids.count() {
+            for rule in rules {
+                if rule.left == ids[index] && rule.right == ids[index + 1] && rule.rank < rank {
+                    position = index
+                    selected = rule.id
+                    rank = rule.rank
+                }
+            }
+            index++
+        }
+        if position < 0 {break}
+        var next:int[] = []
+        index = 0
+        while index < ids.count() {
+            if index == position {next.append(selected); index += 2}
+            else {next.append(ids[index]); index++}
+        }
+        ids = next
+    }
+    return ids
+}
+
+func naive(bytes:@uint8[], spans:@Tokenizer.Span[], rules:@Rule[], controls:bool) int[] {
+    var result:int[] = []
+    for span in spans {
+        let view = @bytes[span.start:span.end]
+        if controls && span.end - span.start == 6 &&
+            (try UTF8.decode(view) else error {panic("invalid benchmark segment")}) == "<ctrl>" {
+            result.append(1001)
+            continue
+        }
+        for id in naive_segment(bytes, span.start, span.end, rules) {result.append(id)}
+    }
+    return result
+}
+
+func measured_encode(model:Tokenizer, input:str, profile:str, size:int, round:int) Tokenizer.Encoding {
+    var timer = Stopwatch()
+    timer.start()
+    let encoded = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1001]))) else error {panic(error.detail)}
+    timer.stop()
+    print("encode,$(profile),$(size),$(round),$(encoded.count()),$(timer.get_elapsed_milliseconds() * 1000.0)")
+    return encoded
+}
+
+func measured_naive(bytes:@uint8[], spans:@Tokenizer.Span[], rules:@Rule[], profile:str, size:int, round:int) int[] {
+    var timer = Stopwatch()
+    timer.start()
+    let ids = naive(bytes, spans, rules, profile == "controls")
+    timer.stop()
+    print("naive_fusions,$(profile),$(size),$(round),$(ids.count()),$(timer.get_elapsed_milliseconds() * 1000.0)")
+    return ids
+}
+
+func main() {
+    let arguments = try Process.arguments() else error { panic(error.detail) }
+    var sizes:int[] = [16,32]
+    if arguments.count() == 2 && arguments[1] == "--full" { sizes = [256,512,1024,2048,4096,8192] }
+    else { assert(arguments.count() == 1 || (arguments.count() == 2 && arguments[1] == "--smoke"),
+        "expected --smoke or --full") }
+    let vocabulary = embed_text("../Tests/TokenizerConsumer/Fixtures/bpe-vocab.json")
+    let merges = "a b\nb c\nab c\na a\naa aa\naaaa aa\na Ġ\nĠ b\naĠ b\nÃ ©\n"
+    // IDs are frozen with the miniature vocabulary; no production BPE helper is imported.
+    let rules:Rule[] = [
+        Rule(left:97,right:98,id:256,rank:0), Rule(left:98,right:99,id:257,rank:1), Rule(left:256,right:99,id:258,rank:2),
+        Rule(left:97,right:97,id:259,rank:3), Rule(left:259,right:259,id:260,rank:4), Rule(left:260,right:259,id:261,rank:5),
+        Rule(left:97,right:32,id:269,rank:6), Rule(left:32,right:98,id:270,rank:7), Rule(left:269,right:98,id:271,rank:8), Rule(left:195,right:169,id:272,rank:9)
+    ]
+    let prefix = repeated("a", 4095) + "X"
+    let controls:Tokenizer.SpecialToken[] = [
+        Tokenizer.SpecialToken(surface:prefix, id:1000, role:Tokenizer.SpecialRole.control("prefix")),
+        Tokenizer.SpecialToken(surface:"<ctrl>", id:1001, role:Tokenizer.SpecialRole.control("literal"))
+    ]
+    print("stage,profile,bytes,round,tokens,microseconds")
+    for profile in ["raw","equal_rank","alternating","unicode","gpt2","controls","false_prefix"] {
+        var selected_rules = merges
+        var reference_rules = rules
+        if profile == "raw" {selected_rules = ""; reference_rules = []}
+        var splitter = Tokenizer.PreTokenizer.none
+        if profile == "gpt2" {splitter = Tokenizer.PreTokenizer.gpt2}
+        let options = Tokenizer.LoadOptions(pre_tokenizer:splitter, special_tokens:controls)
+        // A fresh immutable model each time; OS file I/O is excluded from this load metric.
+        for round in 0...5 {
+            var timer = Stopwatch()
+            timer.start()
+            var fresh = try Tokenizer.parse_bpe(vocabulary, selected_rules, options) else error {panic(error.detail)}
+            timer.stop()
+            assert(fresh.special_tokens().count() == 2)
+            print("load,$(profile),0,$(round),0,$(timer.get_elapsed_milliseconds() * 1000.0)")
+        }
+        var model = try Tokenizer.parse_bpe(vocabulary, selected_rules, options) else error {panic(error.detail)}
+        for size in sizes {
+            var unit = "a"
+            if profile == "alternating" {unit = "ab"}
+            if profile == "unicode" {unit = "é🙂"}
+            if profile == "gpt2" {unit = "abc 123! é🙂\n"}
+            if profile == "controls" {unit = "abc<ctrl>"}
+            let input = repeated(unit, size)
+            let bytes = UTF8.bytes(input)
+            let warm = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1001]))) else error {panic(error.detail)}
+            let spans = warm.segments()
+            for round in 0...5 {
+                var encoded:Tokenizer.Encoding? = null
+                var expected:int[] = []
+                // Alternate paired order to expose first/second-sample drift.
+                if round % 2 == 0 {
+                    encoded = measured_encode(model, input, profile, bytes.count(), round)
+                    expected = measured_naive(bytes, spans, reference_rules, profile, bytes.count(), round)
+                } else {
+                    expected = measured_naive(bytes, spans, reference_rules, profile, bytes.count(), round)
+                    encoded = measured_encode(model, input, profile, bytes.count(), round)
+                }
+                let ids = encoded!.ids()
+                assert(ids.count() == expected.count())
+                for index in 0...ids.count() {assert(ids[index] == expected[index], "benchmark ID $(index)")}
+                assert((try model.decode(ids) else error {panic(error.detail)}) == input)
+            }
+        }
+    }
+}
