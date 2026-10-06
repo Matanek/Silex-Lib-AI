@@ -1,0 +1,15 @@
+use AI.Tokenizer
+
+// Application-owned model boundary: only portable IDs cross this interface.
+func model_boundary(token_ids:int[]) int {
+    var total = 0
+    for id in token_ids { total += id }
+    return total
+}
+
+test "public token IDs cross a model boundary without Tensor" {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"),
+        "a b\nab c\n") else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc") else error { panic(error.detail) }
+    assert(model_boundary(encoding.ids()) == 258)
+}
