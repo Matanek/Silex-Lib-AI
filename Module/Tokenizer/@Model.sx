@@ -143,24 +143,33 @@ public class Tokenizer {
         }
         let allowed = try self.controls.allowed(options.special_input)
         let added = try self.controls.boundaries(options.boundary_tokens)
+        var boundary_count = 0
+        if added.first >= 0 { boundary_count++ }
+        if added.last >= 0 { boundary_count++ }
+        if boundary_count > options.maximum_tokens {
+            return Result<Encoding, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.limit_exceeded,
+                detail:"encoding exceeds the configured token limit"))
+        }
+        var body_limit = options.maximum_tokens
+        if added.last >= 0 { body_limit-- }
         let bytes = UTF8.bytes(source)
         let matches = self.controls.find(bytes, options.special_input)
         var boundaries:Span[] = []
         var pieces:Piece[] = []
-        if added.first >= 0 { try append_control(pieces, self.controls.values[added.first], null, options.maximum_tokens) }
+        if added.first >= 0 { try append_control(pieces, self.controls.values[added.first], null, body_limit) }
         var cursor = 0
         for found in matches {
             if !allowed.contains(self.controls.values[found.index].id) {
                 return Result<Encoding, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.forbidden_special,
                     detail:"literal special token is not allowed at byte $(found.start)"))
             }
-            try self.encode_region(bytes, cursor, found.start, pieces, boundaries, options.maximum_tokens)
+            try self.encode_region(bytes, cursor, found.start, pieces, boundaries, body_limit)
             let span = Span(start:found.start, end:found.end)
             boundaries.append(span)
-            try append_control(pieces, self.controls.values[found.index], span, options.maximum_tokens)
+            try append_control(pieces, self.controls.values[found.index], span, body_limit)
             cursor = found.end
         }
-        try self.encode_region(bytes, cursor, bytes.count(), pieces, boundaries, options.maximum_tokens)
+        try self.encode_region(bytes, cursor, bytes.count(), pieces, boundaries, body_limit)
         if added.last >= 0 { try append_control(pieces, self.controls.values[added.last], null, options.maximum_tokens) }
         return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))
     }
@@ -176,7 +185,12 @@ public class Tokenizer {
             let boundary = Span(start:start + relative.start, end:start + relative.end)
             boundaries.append(boundary)
             var segment:Piece[] = []
+            let remaining = maximum_tokens - pieces.count()
             if self.rules.count() == 0 {
+                if boundary.end - boundary.start > remaining {
+                    return Result<void, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.limit_exceeded,
+                        detail:"encoding exceeds the configured token limit"))
+                }
                 var index = boundary.start
                 while index < boundary.end {
                     let values:uint8[] = [bytes[index]]
@@ -186,15 +200,9 @@ public class Tokenizer {
                 }
             } else {
                 var merger = SegmentMerger(bytes, boundary, self.byte_ids, self.rules)
-                segment = merger.pieces(bytes)
+                segment = try merger.pieces(bytes, remaining)
             }
-            for piece in segment {
-                if pieces.count() >= maximum_tokens {
-                    return Result<void, EncodeError>.failure(EncodeError(
-                        kind:EncodeErrorKind.limit_exceeded, detail:"encoding exceeds the configured token limit"))
-                }
-                pieces.append(piece)
-            }
+            for piece in segment { pieces.append(piece) }
         }
         return Result<void, EncodeError>.success()
     }

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Check the total budget including controls and BOS/EOS before final pieces,
+  after merging when required; qualify exact limits and hostile inputs.
+
 - Add immutable role-based controls, explicit input policies, BOS/EOS and included/skipped decoding; pin Tokenizers 0.22.1 across 594 multilingual and adversarial cases, with no Python dependency in ordinary calls or tests.
 
 - Apply BPE merges by rank then leftmost occurrence, preserving boundaries

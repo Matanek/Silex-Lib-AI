@@ -79,9 +79,11 @@ class SegmentMerger {
     private let rules:Dictionary<TokenPair, MergeRule>
     private var nodes:MergeNode[] = []
     private var candidates:MergeHeap = MergeHeap()
+    private var active_count:int = 0
 
     init(bytes:@uint8[], boundary:Span, byte_ids:@int[], rules:Dictionary<TokenPair, MergeRule>) {
         self.rules = rules
+        self.active_count = boundary.end - boundary.start
         var index = boundary.start
         while index < boundary.end {
             let slot = index - boundary.start
@@ -119,14 +121,19 @@ class SegmentMerger {
             self.nodes[candidate.left].next = right.next
             self.nodes[candidate.left].generation++
             self.nodes[candidate.right].active = false
+            self.active_count--
             if right.next >= 0 { self.nodes[right.next].previous = candidate.left }
             self.schedule(left.previous)
             self.schedule(candidate.left)
         }
     }
 
-    func pieces(bytes:@uint8[]) Piece[] {
+    func pieces(bytes:@uint8[], maximum_tokens:int) Result<Piece[], EncodeError> {
         self.merge()
+        if self.active_count > maximum_tokens {
+            return Result<Piece[], EncodeError>.failure(EncodeError(
+                kind:EncodeErrorKind.limit_exceeded, detail:"encoding exceeds the configured token limit"))
+        }
         var result:Piece[] = []
         var index = 0
         while index >= 0 && index < self.nodes.count() {
@@ -138,6 +145,6 @@ class SegmentMerger {
             result.append(Piece(id:node.id, bytes:values, span:Span(start:node.first, end:node.last)))
             index = node.next
         }
-        return result
+        return Result<Piece[], EncodeError>.success(result)
     }
 }

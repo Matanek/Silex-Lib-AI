@@ -223,6 +223,13 @@ intermédiaires avant ce second contrôle ; le volume reste borné par l’entr�
 et les tables Unicode. Le décodage vérifie la capacité restante avant d’ajouter un
 token.
 
+La limite de tokens comprend les contrôles littéraux et BOS/EOS demandés.
+Sans règles, le nombre d’octets du segment permet de refuser avant de construire
+ses morceaux. Avec des règles, le tokenizer compte les tokens restants après
+les fusions, puis vérifie le budget avant de construire les morceaux finaux.
+La capacité d’EOS est réservée avant l’encodage du corps. Plusieurs options ou
+entrées invalides simultanées ne garantissent pas un ordre de diagnostic.
+
 ## Configurer et autoriser les contrôles
 
 `LoadOptions.special_tokens` associe chaque surface non vide à un ID non négatif

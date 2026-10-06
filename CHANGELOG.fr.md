@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Vérifier le budget total comprenant contrôles et BOS/EOS avant les morceaux
+  finaux, après fusion lorsque nécessaire ; qualifier les seuils exacts et
+  entrées hostiles.
+
 - Ajout des contrôles immuables avec rôles, politiques explicites, BOS/EOS et décodage inclus/ignoré ; oracle Tokenizers 0.22.1 épinglé sur 594 cas multilingues et adversariaux, sans dépendance Python dans les appels ou tests ordinaires.
 
 - Appliquer les fusions BPE par rang puis occurrence gauche, en conservant les

@@ -1,0 +1,100 @@
+use AI.Tokenizer
+
+func robust_repeat(unit:str, count:int) str {
+    var result = ""
+    var block = unit
+    var remaining = count
+    while remaining > 0 {
+        if remaining % 2 == 1 { result += block }
+        remaining /= 2
+        if remaining > 0 { block += block }
+    }
+    return result
+}
+
+func robust_model(merges:str = "", options:Tokenizer.LoadOptions = Tokenizer.LoadOptions()) Tokenizer {
+    return try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), merges, options)
+        else error { panic(error.detail) }
+}
+
+func robust_limit(model:Tokenizer, input:str, options:Tokenizer.EncodeOptions) {
+    match model.encode(input, options) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded, error.detail) }
+        success(_) => { panic("encoding limit ignored") }
+    }
+}
+
+test "raw token budgets include every Unicode byte and long rejected input" {
+    var model = robust_model()
+    let input = robust_repeat("é🙂", 4096)
+    robust_limit(model, input, Tokenizer.EncodeOptions(maximum_tokens:1))
+    robust_limit(model, input, Tokenizer.EncodeOptions(maximum_tokens:24575))
+    let encoded = try model.encode(input, Tokenizer.EncodeOptions(maximum_input_bytes:24576,
+        maximum_normalized_bytes:24576, maximum_tokens:24576)) else error { panic(error.detail) }
+    assert(encoded.count() == 24576)
+    assert((try model.decode(encoded.ids()) else error { panic(error.detail) }) == input)
+    assert((try model.encode("", Tokenizer.EncodeOptions(maximum_tokens:0)) else error { panic(error.detail) }).count() == 0)
+}
+
+test "token budgets apply after all ranked merges rather than to initial bytes" {
+    var model = robust_model("a a\naa aa\n")
+    let input = robust_repeat("a", 4096)
+    robust_limit(model, input, Tokenizer.EncodeOptions(maximum_tokens:1023))
+    let encoded = try model.encode(input, Tokenizer.EncodeOptions(maximum_tokens:1024)) else error { panic(error.detail) }
+    assert(encoded.count() == 1024)
+    for id in encoded.ids() { assert(id == 260) }
+    let pieces = encoded.pieces()
+    assert(pieces[0].span!.start == 0 && pieces[1023].span!.end == 4096)
+    assert((try model.decode(encoded.ids()) else error { panic(error.detail) }) == input)
+}
+
+test "total budgets count literal controls and both boundary tokens" {
+    let config:Tokenizer.SpecialToken[] = [
+        Tokenizer.SpecialToken(surface:"<bos>", id:1000, role:Tokenizer.SpecialRole.bos),
+        Tokenizer.SpecialToken(surface:"<eos>", id:1001, role:Tokenizer.SpecialRole.eos),
+        Tokenizer.SpecialToken(surface:"<ctrl>", id:1002, role:Tokenizer.SpecialRole.control("literal"))
+    ]
+    var model = robust_model("a b\nab c\n", Tokenizer.LoadOptions(special_tokens:config))
+    for maximum in [0,1,2,3] {
+        robust_limit(model, "abc<ctrl>", Tokenizer.EncodeOptions(maximum_tokens:maximum,
+            boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos,
+            special_input:Tokenizer.SpecialInput.allow([1002])))
+    }
+    let encoded = try model.encode("abc<ctrl>", Tokenizer.EncodeOptions(maximum_tokens:4,
+        boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos,
+        special_input:Tokenizer.SpecialInput.allow([1002]))) else error { panic(error.detail) }
+    let ids = encoded.ids()
+    assert(ids.count() == 4 && ids[0] == 1000 && ids[1] == 258 && ids[2] == 1002 && ids[3] == 1001)
+    assert(encoded.pieces()[0].span == null && encoded.pieces()[3].span == null)
+    robust_limit(model, "", Tokenizer.EncodeOptions(maximum_tokens:1,
+        boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos))
+}
+
+test "normalization expansion and long false control prefixes remain bounded" {
+    var normalized = robust_model("", Tokenizer.LoadOptions(normalization:Tokenizer.Normalization.nfkc))
+    robust_limit(normalized, "Ⅳ", Tokenizer.EncodeOptions(maximum_normalized_bytes:1))
+    let encoded = try normalized.encode("Ⅳ", Tokenizer.EncodeOptions(maximum_input_bytes:3,
+        maximum_normalized_bytes:2, maximum_tokens:2)) else error { panic(error.detail) }
+    assert(encoded.normalized_text() == "IV" && encoded.count() == 2)
+    let controls:Tokenizer.SpecialToken[] = [Tokenizer.SpecialToken(surface:robust_repeat("a",4095) + "X",
+        id:1000, role:Tokenizer.SpecialRole.control("prefix"))]
+    var model = robust_model("", Tokenizer.LoadOptions(special_tokens:controls))
+    robust_limit(model, robust_repeat("a",8192) + "Z", Tokenizer.EncodeOptions(maximum_tokens:8192))
+}
+
+test "deep truncated and oversized merge inputs return structured errors" {
+    let depth = robust_repeat("[",128) + "0" + robust_repeat("]",128)
+    match Tokenizer.parse_bpe(depth, "", Tokenizer.LoadOptions(maximum_json_depth:4)) {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.limit_exceeded) }
+        success(_) => { panic("deep input accepted") }
+    }
+    let truncated = "{\"a\":\"" + robust_repeat("a",32768)
+    match Tokenizer.parse_bpe(truncated, "") {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_json) }
+        success(_) => { panic("truncated input accepted") }
+    }
+    match Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), robust_repeat("a",32768) + " b\n") {
+        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_merges) }
+        success(_) => { panic("unknown oversized merge symbol accepted") }
+    }
+}

@@ -215,6 +215,13 @@ segmentation and token creation. Normalization may create intermediate results
 before this second check; their volume is bounded by input and Unicode tables.
 Decoding checks remaining capacity before appending a token.
 
+The token limit includes literal controls and requested BOS/EOS tokens.
+Without rules, a segment's byte count allows rejection before constructing its
+pieces. With rules, the tokenizer counts remaining tokens after merging and
+checks the budget before constructing final pieces. EOS capacity is reserved
+before encoding the body. Simultaneously invalid options or inputs do not
+guarantee a diagnostic order.
+
 ## Configure and allow controls
 
 `LoadOptions.special_tokens` associates each nonempty surface with a nonnegative
