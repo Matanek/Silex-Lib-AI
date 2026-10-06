@@ -1,0 +1,234 @@
+use STD.Collections.Dictionary
+use STD.Text.UTF8
+
+public enum SpecialRole { bos; eos; padding; unknown; control(str) }
+public struct SpecialToken { let surface:str; let id:int; let role:SpecialRole }
+public enum SpecialInput { reject; allow(int[]); ordinary_text }
+public enum BoundaryTokens { none; bos; eos; bos_and_eos }
+public enum DecodeSpecialTokens { include; skip }
+
+struct SpecialMatch { let start:int; let end:int; let index:int }
+struct AddedBoundaries { let first:int; let last:int }
+struct SpecialNode {
+    var terminal:int
+    var failure:int
+    var output:int
+    var first_child:int
+    var next_sibling:int
+    let byte:int
+}
+
+func special_role_key(role:SpecialRole) str {
+    return match role {
+        bos => "bos"
+        eos => "eos"
+        padding => "padding"
+        unknown => "unknown"
+        control(name) => "control:" + name
+    }
+}
+
+struct SpecialTable {
+    let values:SpecialToken[]
+    let by_id:Dictionary<int, SpecialToken>
+    private let edges:Dictionary<TokenPair, int>
+    private let nodes:SpecialNode[]
+    private let lengths:int[]
+    private let bos:int
+    private let eos:int
+
+    init(values:SpecialToken[]) {
+        var by_id = Dictionary<int, SpecialToken>()
+        var edges = Dictionary<TokenPair, int>(pair_hash, pair_equal)
+        var nodes:SpecialNode[] = [SpecialNode(terminal:-1, failure:0, output:-1, first_child:-1, next_sibling:-1, byte:0)]
+        var lengths:int[] = []
+        var bos = -1
+        var eos = -1
+        var index = 0
+        for token in values {
+            by_id.set(token.id, token)
+            lengths.append(UTF8.byte_count(token.surface))
+            if token.role == SpecialRole.bos { bos = index }
+            if token.role == SpecialRole.eos { eos = index }
+            var node = 0
+            for byte in UTF8.bytes(token.surface) {
+                let edge = TokenPair(left:node, right:byte as int)
+                if next = edges.find(edge) { node = next }
+                else {
+                    let next = nodes.count()
+                    edges.set(edge, next)
+                    nodes.append(SpecialNode(terminal:-1, failure:0, output:-1, first_child:-1,
+                        next_sibling:nodes[node].first_child, byte:byte as int))
+                    nodes[node].first_child = next
+                    node = next
+                }
+            }
+            nodes[node].terminal = index
+            index++
+        }
+        // Breadth-first failure links share known suffixes instead of rescanning.
+        var pending:int[] = [0]
+        var head = 0
+        while head < pending.count() {
+            let parent = pending[head]
+            var child = nodes[parent].first_child
+            while child >= 0 {
+                if parent != 0 {
+                    var failure = nodes[parent].failure
+                    var next = edges.find(TokenPair(left:failure, right:nodes[child].byte))
+                    while failure > 0 && next == null {
+                        failure = nodes[failure].failure
+                        next = edges.find(TokenPair(left:failure, right:nodes[child].byte))
+                    }
+                    if found = next { nodes[child].failure = found }
+                }
+                let suffix = nodes[child].failure
+                if nodes[suffix].terminal >= 0 { nodes[child].output = suffix }
+                else { nodes[child].output = nodes[suffix].output }
+                pending.append(child)
+                child = nodes[child].next_sibling
+            }
+            head++
+        }
+        self.values = values
+        self.by_id = by_id
+        self.edges = edges
+        self.nodes = nodes
+        self.lengths = lengths
+        self.bos = bos
+        self.eos = eos
+    }
+
+    func allowed(policy:SpecialInput) Result<Dictionary<int, bool>, EncodeError> {
+        var allowed = Dictionary<int, bool>()
+        match policy {
+            allow(ids) => {
+                if ids.count() > self.values.count() {
+                    return Result<Dictionary<int, bool>, EncodeError>.failure(EncodeError(
+                        kind:EncodeErrorKind.invalid_options, detail:"invalid special token allow-list"))
+                }
+                for id in ids {
+                    if !self.by_id.contains(id) || allowed.contains(id) {
+                        return Result<Dictionary<int, bool>, EncodeError>.failure(EncodeError(
+                            kind:EncodeErrorKind.invalid_options, detail:"unknown or duplicate allowed special ID"))
+                    }
+                    allowed.set(id, true)
+                }
+            }
+            else => {}
+        }
+        return Result<Dictionary<int, bool>, EncodeError>.success(allowed)
+    }
+
+    func boundaries(request:BoundaryTokens) Result<AddedBoundaries, EncodeError> {
+        var first = -1
+        var last = -1
+        if request == BoundaryTokens.bos || request == BoundaryTokens.bos_and_eos {
+            if self.bos < 0 { return missing_boundary() }
+            first = self.bos
+        }
+        if request == BoundaryTokens.eos || request == BoundaryTokens.bos_and_eos {
+            if self.eos < 0 { return missing_boundary() }
+            last = self.eos
+        }
+        return Result<AddedBoundaries, EncodeError>.success(AddedBoundaries(first:first, last:last))
+    }
+
+    func find(bytes:@uint8[], policy:SpecialInput) SpecialMatch[] {
+        var result:SpecialMatch[] = []
+        if policy == SpecialInput.ordinary_text || self.values.count() == 0 { return result }
+        // Store the longest terminal at each start, then select leftmost matches.
+        // Failure/output links bound false-prefix traversal by the input length.
+        var best:int[] = []
+        for index in 0...bytes.count() { best.append(-1) }
+        var state = 0
+        var cursor = 0
+        while cursor < bytes.count() {
+            var next = self.edges.find(TokenPair(left:state, right:bytes[cursor] as int))
+            while state > 0 && next == null {
+                state = self.nodes[state].failure
+                next = self.edges.find(TokenPair(left:state, right:bytes[cursor] as int))
+            }
+            state = next ?? 0
+            var terminal = state
+            if self.nodes[terminal].terminal < 0 { terminal = self.nodes[terminal].output }
+            while terminal >= 0 {
+                let index = self.nodes[terminal].terminal
+                let size = self.lengths[index]
+                let start = cursor + 1 - size
+                let previous = best[start]
+                if previous < 0 || size > self.lengths[previous] { best[start] = index }
+                terminal = self.nodes[terminal].output
+            }
+            cursor++
+        }
+        var start = 0
+        while start < bytes.count() {
+            let index = best[start]
+            if index < 0 { start++; continue }
+            let end = start + self.lengths[index]
+            result.append(SpecialMatch(start:start, end:end, index:index))
+            start = end
+        }
+        return result
+    }
+}
+
+func missing_boundary() Result<AddedBoundaries, EncodeError> {
+    return Result<AddedBoundaries, EncodeError>.failure(EncodeError(
+        kind:EncodeErrorKind.invalid_options, detail:"requested BOS/EOS token is not configured"))
+}
+
+func load_specials(options:LoadOptions, vocabulary:Dictionary<int, uint8[]>, symbols:Dictionary<str, int>, path:str?) Result<SpecialTable, LoadError> {
+    if options.special_tokens.count() > options.maximum_special_tokens {
+        return Result<SpecialTable, LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded,
+            path:path, detail:"too many special tokens"))
+    }
+    var surfaces = Dictionary<str, bool>()
+    var ids = Dictionary<int, bool>()
+    var roles = Dictionary<str, bool>()
+    var used_bytes = 0
+    for token in options.special_tokens {
+        let size = UTF8.byte_count(token.surface)
+        if size > options.maximum_token_bytes || size > options.maximum_special_bytes - used_bytes {
+            return Result<SpecialTable, LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded,
+                path:path, detail:"special token surfaces exceed configured byte limits"))
+        }
+        used_bytes += size
+        let role = special_role_key(token.role)
+        if size == 0 || token.id < 0 || vocabulary.contains(token.id) || symbols.contains(token.surface) ||
+            ids.contains(token.id) || surfaces.contains(token.surface) || roles.contains(role) || role == "control:" ||
+            normalize_text(token.surface, options.normalization) != token.surface {
+            return Result<SpecialTable, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_special_tokens,
+                path:path, detail:"invalid, duplicate, colliding or normalization-unstable special token"))
+        }
+        ids.set(token.id, true)
+        surfaces.set(token.surface, true)
+        roles.set(role, true)
+    }
+    // Reject raw UTF-8 surfaces that an ordinary vocabulary entry already denotes.
+    if surfaces.count() > 0 {
+        for member in vocabulary.iterator() {
+            let view = @member.value[0:member.value.count()]
+            match UTF8.decode(view) {
+                success(text) => {
+                    if surfaces.contains(text) {
+                        return Result<SpecialTable, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_special_tokens,
+                            path:path, detail:"special surface collides with ordinary vocabulary bytes"))
+                    }
+                }
+                failure(_) => {}
+            }
+        }
+    }
+    return Result<SpecialTable, LoadError>.success(SpecialTable(options.special_tokens))
+}
+
+func append_control(pieces:&Piece[], token:SpecialToken, span:Span?, maximum_tokens:int) Result<void, EncodeError> {
+    if pieces.count() >= maximum_tokens {
+        return Result<void, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.limit_exceeded,
+            detail:"encoding exceeds the configured token limit"))
+    }
+    pieces.append(Piece(id:token.id, bytes:UTF8.bytes(token.surface), span:span, special:token.role))
+    return Result<void, EncodeError>.success()
+}

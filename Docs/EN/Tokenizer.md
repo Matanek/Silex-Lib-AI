@@ -10,8 +10,9 @@ when loading; encoding never rereads model files.
 
 Supply `vocab.json` and `merges.txt` in the runtime working directory. The vocabulary
 is a JSON object mapping GPT-2 byte-level alphabet symbols to unique non-negative
-integer IDs. It covers all 256 bytes; the merges file is empty or contains only
-`#version: 0.2`. This program uses an application-provided model:
+integer IDs. It covers all 256 bytes; the merges file lists ranked symbol pairs,
+optionally headed by `#version: 0.2`. An empty file enables byte fallback.
+This program uses an application-provided model:
 
 ```sx
 use AI.Tokenizer
@@ -175,8 +176,9 @@ by spans, after the selected normalization.
 A `Span` is a half-open `[start, end)` interval in **UTF-8 bytes**, not scalars,
 UTF-16 units or graphemes. For example, `é` produces two one-byte pieces with
 spans `[0, 1)` and `[1, 2)`. Neither individual byte is valid UTF-8. The optional
-span type reserves source absence for future injected tokens; every piece in
-this first surface has a span.
+span is absent for added BOS/EOS, and present for literal controls.
+`Piece.special` identifies the control role, or is absent for ordinary pieces.
+`tokenizer.special_tokens()` returns detached model descriptions.
 
 `decode_bytes(ids)` preserves bytes. `decode(ids)` validates them strictly:
 unknown IDs or invalid UTF-8 return a `DecodeError` without replacement.
@@ -192,12 +194,15 @@ other AI modules remain in place.
 
 `Tokenizer.load_bpe` returns `Result<Tokenizer, LoadError>`. `kind`, `path` and
 `detail` distinguish I/O, invalid options, JSON, vocabulary, incomplete alphabet,
-invalid rules and exceeded limits. Fractional, out-of-range
+invalid rules or controls and exceeded limits. Fractional, out-of-range
 or duplicate IDs, empty/out-of-alphabet tokens and unknown or duplicate merges
 are rejected before use.
 
 `LoadOptions` bounds each file to 16 MiB, JSON depth to 32, vocabulary entries
-and merge rules to 100,000, and each token to 4,096 bytes. Fields are configurable.
+and merge rules to 100,000, and each token to 4,096 bytes. Controls are bounded
+to 256 descriptors and 65,536 cumulative surface bytes (`maximum_special_tokens`,
+`maximum_special_bytes`); the per-token bound also applies to control surfaces.
+Fields are configurable.
 Reading remains bounded if a file grows; entry limits are checked after JSON
 parsing, which is already bounded by file size and depth.
 
@@ -210,11 +215,61 @@ segmentation and token creation. Normalization may create intermediate results
 before this second check; their volume is bounded by input and Unicode tables.
 Decoding checks remaining capacity before appending a token.
 
-## Compatibility of this first surface
+## Configure and allow controls
 
-Special tokens and BOS/EOS are not yet available. Byte-level describes
-the alphabet and round trip; it does not
-qualify the complete GPT-2 pipeline against an independent oracle. No training,
+`LoadOptions.special_tokens` associates each nonempty surface with a nonnegative
+ID and a closed role: `bos`, `eos`, `padding`, `unknown` or `control("name")`.
+IDs, surfaces and roles are unique; collisions with ordinary IDs, symbols or
+bytes are rejected. Named controls require a nonempty name. Surfaces must already
+be stable under the model normalization. Recognition follows normalization and
+precedes segmentation: longest surface first, then model order. Identical
+surfaces cannot be configured twice.
+
+`EncodeOptions.special_input` defaults to `SpecialInput.reject`: a recognized
+literal surface returns `forbidden_special`. `SpecialInput.allow([ids])` permits
+only listed controls; unknown or duplicate IDs are invalid options.
+`SpecialInput.ordinary_text` treats all such surfaces as ordinary text.
+These policies do not automatically add BOS/EOS.
+
+`boundary_tokens` selects `BoundaryTokens.none`, `bos`, `eos` or `bos_and_eos`.
+A requested missing role is an invalid option, even for empty input. Added
+controls count toward the token limit and have no span.
+`DecodeOptions.special_tokens` selects `DecodeSpecialTokens.include` (default)
+or `skip`; only configured IDs are skipped, never unknown IDs. Padding/unknown
+roles describe controls; they do not enable padding or byte replacement.
+
+This [executable program](../../Tests/TokenizerConsumer/SpecialExample.sx)
+explicitly adds BOS/EOS and then reconstructs the text alone:
+
+```sx
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"), "a b\nab c\n",
+        Tokenizer.LoadOptions(special_tokens:[
+            Tokenizer.SpecialToken(surface:"<bos>", id:1000, role:Tokenizer.SpecialRole.bos),
+            Tokenizer.SpecialToken(surface:"<eos>", id:1001, role:Tokenizer.SpecialRole.eos)
+        ])) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc", Tokenizer.EncodeOptions(
+        boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos)) else error { panic(error.detail) }
+    for piece in encoding.pieces() { print(piece.id) }
+    print(try tokenizer.decode(encoding.ids(), Tokenizer.DecodeOptions(
+        special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error { panic(error.detail) })
+}
+```
+
+Output: `1000`, `258`, `1001`, then `abc`.
+
+## Verified compatibility
+
+The [pinned oracle](../../Tests/TokenizerConsumer/Fixtures/Oracle/README.md)
+Tokenizers **0.22.1** checks 594 cases of the synthetic model: identity/NFC/NFKC,
+ByteLevel with/without regex, no automatic prefix space, normalized controls and
+explicit BOS/EOS template. IDs, piece bytes and included/skipped decoding are
+compared. Normalized UTF-8 offsets are proved locally without assuming the
+oracle offset unit. Compatibility is limited to this model and these options;
+Python tools only regenerate development fixtures.
+No training,
 model downloads, padding, batching or tensor conversion is provided. Model files
 remain owned by the application.
 

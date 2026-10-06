@@ -1,0 +1,14 @@
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"), "a b\nab c\n",
+        Tokenizer.LoadOptions(special_tokens:[
+            Tokenizer.SpecialToken(surface:"<bos>", id:1000, role:Tokenizer.SpecialRole.bos),
+            Tokenizer.SpecialToken(surface:"<eos>", id:1001, role:Tokenizer.SpecialRole.eos)
+        ])) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc", Tokenizer.EncodeOptions(
+        boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos)) else error { panic(error.detail) }
+    for piece in encoding.pieces() { print(piece.id) }
+    print(try tokenizer.decode(encoding.ids(), Tokenizer.DecodeOptions(
+        special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error { panic(error.detail) })
+}

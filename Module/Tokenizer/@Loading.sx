@@ -16,7 +16,7 @@ func load_model(vocabulary_path:str, merges_path:str, options:LoadOptions) Resul
 func validate_load_options(options:LoadOptions, path:str?) Result<void, LoadError> {
     if options.maximum_file_bytes < 0 || options.maximum_json_depth < 1 ||
         options.maximum_vocabulary_entries < 256 || options.maximum_token_bytes < 1 ||
-        options.maximum_merge_rules < 0 {
+        options.maximum_merge_rules < 0 || options.maximum_special_tokens < 0 || options.maximum_special_bytes < 0 {
         return Result<void, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_options, path:path, detail:"invalid model loading limits"))
     }
     return Result<void, LoadError>.success()
@@ -61,9 +61,10 @@ func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
     for id in byte_ids {
         if id < 0 { return load_failure(LoadErrorKind.incomplete_alphabet, vocabulary_path, "vocabulary must cover all 256 bytes") }
     }
+    let controls = try load_specials(options, vocabulary, symbols, vocabulary_path)
     let rules = try parse_merges(merges_text, symbols, merges_path, options.maximum_merge_rules)
     let splitter = try compile_splitter(options.pre_tokenizer, vocabulary_path)
-    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter, rules))
+    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter, rules, controls))
 }
 
 func read_model_file(path:str, maximum_bytes:int, invalid_text:LoadErrorKind) Result<str, LoadError> {

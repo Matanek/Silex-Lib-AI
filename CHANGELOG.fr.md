@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Ajout des contrôles immuables avec rôles, politiques explicites, BOS/EOS et décodage inclus/ignoré ; oracle Tokenizers 0.22.1 épinglé sur 594 cas multilingues et adversariaux, sans dépendance Python dans les appels ou tests ordinaires.
+
 - Appliquer les fusions BPE par rang puis occurrence gauche, en conservant les
   frontières et spans ; borner les tokens après fusion, sans rescannage global.
 

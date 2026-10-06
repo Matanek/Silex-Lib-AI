@@ -11,7 +11,8 @@ est validé une fois au chargement ; aucun fichier n’est relu durant l’encod
 Fournissez `vocab.json` et `merges.txt` dans le répertoire courant à l’exécution.
 Le vocabulaire est un objet JSON associant les symboles de l’alphabet byte-level
 GPT-2 à des IDs entiers uniques non négatifs. Il couvre les 256 octets ; son
-fichier de fusions est vide ou contient seulement `#version: 0.2`.
+fichier de fusions contient des paires de symboles ordonnées, éventuellement
+précédées de `#version: 0.2` ; un fichier vide conserve un token par octet.
 Ce programme traite un modèle fourni par l’application :
 
 ```sx
@@ -180,8 +181,10 @@ les spans se rapportent, après la normalisation choisie.
 Un `Span` est un intervalle `[start, end)` en **octets UTF-8**, pas en scalaires,
 UTF-16 ou graphèmes. Par exemple, `é` produit deux morceaux d’un octet, de spans
 `[0, 1)` et `[1, 2)`. Les octets de chacun ne forment pas séparément du UTF-8
-valide. Le type optionnel du span réserve l’absence de source aux futurs tokens
-injectés ; tous les morceaux de cette première surface ont un span.
+valide. Les contrôles présents dans le texte ont un span ; BOS/EOS ajoutés
+n’en ont pas. `Piece.special` identifie le rôle du contrôle, ou reste absent
+pour un morceau ordinaire. `tokenizer.special_tokens()` fournit les descriptions
+configurées dans une liste détachée.
 
 `decode_bytes(ids)` préserve les octets. `decode(ids)` les valide strictement :
 un ID inconnu ou une séquence UTF-8 invalide rend un `DecodeError`, sans
@@ -197,12 +200,15 @@ Tensor, GFX, GPU ou Python ; les dépendances des autres modules AI demeurent.
 
 `Tokenizer.load_bpe` retourne `Result<Tokenizer, LoadError>`. `kind`, `path` et
 `detail` distinguent I/O, options invalides, JSON, vocabulaire, alphabet incomplet,
-règles invalides et limite dépassée.
+règles ou contrôles invalides et limite dépassée.
 Les IDs fractionnaires, hors plage ou dupliqués, tokens vides/hors alphabet,
 fusions inconnues ou dupliquées sont refusés avant usage.
 
 `LoadOptions` borne chaque fichier à 16 MiB, la profondeur JSON à 32, les entrées
-et règles à 100 000, et chaque token à 4 096 octets. Les champs sont configurables.
+et règles à 100 000, et chaque token à 4 096 octets. Les contrôles sont bornés à 256 descriptions
+et 65 536 octets de surfaces cumulées (`maximum_special_tokens`,
+`maximum_special_bytes`) ; la limite par token s’applique aussi à leur surface.
+Les champs sont configurables.
 La lecture est bornée même si un fichier grandit ; les limites d’entrées sont
 contrôlées après l’analyse JSON, déjà bornée par taille et profondeur.
 
@@ -217,11 +223,61 @@ intermédiaires avant ce second contrôle ; le volume reste borné par l’entr�
 et les tables Unicode. Le décodage vérifie la capacité restante avant d’ajouter un
 token.
 
-## Compatibilité de cette première surface
+## Configurer et autoriser les contrôles
 
-Les tokens spéciaux et BOS/EOS ne sont pas encore disponibles. Le nom
-byte-level décrit l’alphabet et le pipeline ordinaire ;
-il ne constitue pas une qualification différentielle du pipeline GPT-2 complet.
+`LoadOptions.special_tokens` associe chaque surface non vide à un ID non négatif
+et au rôle `bos`, `eos`, `padding`, `unknown` ou `control("nom")`. IDs, surfaces
+et rôles sont uniques ; les collisions avec IDs, symboles ou octets ordinaires
+sont refusées. Un rôle nommé exige un nom non vide. Les surfaces doivent déjà
+être stables sous la normalisation du modèle. Les contrôles sont reconnus dans
+le texte normalisé, avant son découpage ; la surface la plus longue gagne,
+puis l’ordre du modèle. Une surface identique ne peut pas être configurée deux fois.
+
+`EncodeOptions.special_input` vaut `SpecialInput.reject` par défaut : une surface
+littérale reconnue rend `forbidden_special`. `SpecialInput.allow([ids])` autorise
+uniquement les contrôles listés ; les IDs inconnus ou répétés rendent une erreur
+d’options. `SpecialInput.ordinary_text` traite toutes ces surfaces comme du texte
+ordinaire. Aucune politique n’injecte automatiquement BOS/EOS.
+
+`boundary_tokens` choisit `BoundaryTokens.none`, `bos`, `eos` ou `bos_and_eos`.
+Un rôle demandé mais absent rend une erreur d’options, même sur entrée vide.
+Les contrôles ajoutés comptent dans la limite de tokens et n’ont pas de span.
+`DecodeOptions.special_tokens` choisit `DecodeSpecialTokens.include` (défaut)
+ou `skip` ; seuls les IDs configurés sont ignorés, jamais les IDs inconnus.
+Les rôles padding/unknown décrivent des contrôles ; ils n’activent ni padding
+ni remplacement d’octets inconnus.
+
+Ce [programme exécutable](../../Tests/TokenizerConsumer/SpecialExample.sx)
+ajoute explicitement BOS/EOS puis reconstruit uniquement le texte :
+
+```sx
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"), "a b\nab c\n",
+        Tokenizer.LoadOptions(special_tokens:[
+            Tokenizer.SpecialToken(surface:"<bos>", id:1000, role:Tokenizer.SpecialRole.bos),
+            Tokenizer.SpecialToken(surface:"<eos>", id:1001, role:Tokenizer.SpecialRole.eos)
+        ])) else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc", Tokenizer.EncodeOptions(
+        boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos)) else error { panic(error.detail) }
+    for piece in encoding.pieces() { print(piece.id) }
+    print(try tokenizer.decode(encoding.ids(), Tokenizer.DecodeOptions(
+        special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error { panic(error.detail) })
+}
+```
+
+Sortie : `1000`, `258`, `1001`, puis `abc`.
+
+## Compatibilité vérifiée
+
+L’[oracle épinglé](../../Tests/TokenizerConsumer/Fixtures/Oracle/README.md)
+Tokenizers **0.22.1** vérifie 594 cas du modèle synthétique : identité/NFC/NFKC,
+ByteLevel avec ou sans regex, sans préfixe automatique, contrôles normalisés et
+template BOS/EOS explicite. IDs, octets des morceaux et décodages inclus/ignorés
+sont comparés. Les offsets UTF-8 normalisés sont prouvés localement, sans reprendre
+l’unité de l’oracle. La compatibilité reste limitée à ce modèle et ces options ;
+les outils Python servent uniquement à régénérer les fixtures de développement.
 Aucun entraînement, téléchargement de modèle, padding, batching ou conversion
 tensorielle n’est fourni. Les modèles restent des fichiers appartenant à
 l’application.

@@ -1,0 +1,8 @@
+{
+  "oracle": "huggingface/tokenizers",
+  "version": "0.22.1",
+  "profiles": 6,
+  "inputs": 33,
+  "cases": 594,
+  "offsets": "not compared: local UTF-8 normalized spans verified separately"
+}

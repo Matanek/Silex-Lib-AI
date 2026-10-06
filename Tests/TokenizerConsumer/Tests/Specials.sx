@@ -1,0 +1,127 @@
+use AI.Tokenizer
+
+func special_config() Tokenizer.SpecialToken[] {
+    return [
+        Tokenizer.SpecialToken(surface:"<bos>", id:1000, role:Tokenizer.SpecialRole.bos),
+        Tokenizer.SpecialToken(surface:"<eos>", id:1001, role:Tokenizer.SpecialRole.eos),
+        Tokenizer.SpecialToken(surface:"<c>", id:1002, role:Tokenizer.SpecialRole.control("short")),
+        Tokenizer.SpecialToken(surface:"<c>long", id:1003, role:Tokenizer.SpecialRole.control("long")),
+        Tokenizer.SpecialToken(surface:"<pad>", id:1004, role:Tokenizer.SpecialRole.padding),
+        Tokenizer.SpecialToken(surface:"<unk>", id:1005, role:Tokenizer.SpecialRole.unknown)
+    ]
+}
+func special_model() Tokenizer {
+    return try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "a b\nab c\n",
+        Tokenizer.LoadOptions(special_tokens:special_config(), normalization:Tokenizer.Normalization.nfc)) else error {panic(error.detail)}
+}
+func special_invalid(tokens:Tokenizer.SpecialToken[], kind:Tokenizer.LoadErrorKind = Tokenizer.LoadErrorKind.invalid_special_tokens,
+    maximum:int = 256, maximum_bytes:int = 65536) {
+    match Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "",
+        Tokenizer.LoadOptions(special_tokens:tokens, maximum_special_tokens:maximum,
+            maximum_special_bytes:maximum_bytes, normalization:Tokenizer.Normalization.nfc)) {
+        failure(error) => { assert(error.kind == kind, error.detail) }
+        success(_) => {panic("invalid controls accepted")}
+    }
+}
+test "special tokens reject empty duplicate colliding and unstable configurations" {
+    special_invalid([Tokenizer.SpecialToken(surface:"", id:1000, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"a", id:1000, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"é", id:1000, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:97, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:-1, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"e\u{301}", id:1000, role:Tokenizer.SpecialRole.bos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:1000, role:Tokenizer.SpecialRole.control(""))])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:1000, role:Tokenizer.SpecialRole.bos),
+        Tokenizer.SpecialToken(surface:"<d>", id:1000, role:Tokenizer.SpecialRole.eos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:1000, role:Tokenizer.SpecialRole.bos),
+        Tokenizer.SpecialToken(surface:"<c>", id:1001, role:Tokenizer.SpecialRole.eos)])
+    special_invalid([Tokenizer.SpecialToken(surface:"<c>", id:1000, role:Tokenizer.SpecialRole.bos),
+        Tokenizer.SpecialToken(surface:"<d>", id:1001, role:Tokenizer.SpecialRole.bos)])
+    special_invalid(special_config(), Tokenizer.LoadErrorKind.limit_exceeded, 5)
+    special_invalid(special_config(), Tokenizer.LoadErrorKind.limit_exceeded, 256, 1)
+}
+test "literal controls require explicit policy and match the longest surface" {
+    var model = special_model()
+    match model.encode("abc<c>long") {
+        failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.forbidden_special)}
+        success(_) => {panic("implicit control injection")}
+    }
+    match model.encode("<c>long", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1002]))) {
+        failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.forbidden_special)}
+        success(_) => {panic("longest match bypassed")}
+    }
+    let encoded = try model.encode("abc<c>longé<c>", Tokenizer.EncodeOptions(
+        special_input:Tokenizer.SpecialInput.allow([1002, 1003]))) else error {panic(error.detail)}
+    let pieces = encoded.pieces()
+    assert(encoded.count() == 5 && pieces[0].id == 258 && pieces[1].id == 1003 && pieces[4].id == 1002)
+    assert(pieces[1].span!.start == 3 && pieces[1].span!.end == 10)
+    assert(pieces[4].span!.start == 12 && pieces[4].span!.end == 15)
+    assert(pieces[1].special! == Tokenizer.SpecialRole.control("long") && pieces[0].special == null)
+    assert((try model.decode(encoded.ids()) else error {panic(error.detail)}) == "abc<c>longé<c>")
+    assert((try model.decode(encoded.ids(), Tokenizer.DecodeOptions(special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error {panic(error.detail)}) == "abcé")
+    let ordinary = try model.encode("<c>", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.ordinary_text)) else error {panic(error.detail)}
+    assert(ordinary.count() == 3 && ordinary.pieces()[0].special == null)
+    assert((try model.decode(ordinary.ids()) else error {panic(error.detail)}) == "<c>")
+}
+test "boundary controls are explicit missing roles fail and added spans are absent" {
+    var model = special_model()
+    let encoded = try model.encode("abc", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos)) else error {panic(error.detail)}
+    let pieces = encoded.pieces()
+    assert(encoded.count() == 3 && pieces[0].id == 1000 && pieces[2].id == 1001)
+    assert(pieces[0].span == null && pieces[2].span == null && pieces[1].span!.end == 3)
+    assert(pieces[0].special! == Tokenizer.SpecialRole.bos)
+    assert((try model.decode(encoded.ids()) else error {panic(error.detail)}) == "<bos>abc<eos>")
+    assert((try model.decode(encoded.ids(), Tokenizer.DecodeOptions(special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error {panic(error.detail)}) == "abc")
+    let empty = try model.encode("", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.eos, maximum_tokens:1)) else error {panic(error.detail)}
+    assert(empty.count() == 1 && empty.pieces()[0].span == null && empty.segments().count() == 0)
+    var plain = try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "") else error {panic(error.detail)}
+    match plain.encode("", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos)) {
+        failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options)}
+        success(_) => {panic("missing BOS silently ignored")}
+    }
+}
+test "special options metadata limits and decoding preserve model ownership" {
+    var model = special_model()
+    var metadata = model.special_tokens()
+    metadata[0] = Tokenizer.SpecialToken(surface:"changed", id:0, role:Tokenizer.SpecialRole.eos)
+    assert(model.special_tokens()[0].id == 1000)
+    for ids in [[9999], [1000, 1000]] {
+        match model.encode("", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow(ids))) {
+            failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options)}
+            success(_) => {panic("invalid allow-list accepted")}
+        }
+    }
+    match model.encode("abc", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos, maximum_tokens:2)) {
+        failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded)}
+        success(_) => {panic("controls ignored by token limit")}
+    }
+    match model.decode([1000], Tokenizer.DecodeOptions(maximum_bytes:4)) {
+        failure(error) => {assert(error.kind == Tokenizer.DecodeErrorKind.limit_exceeded)}
+        success(_) => {panic("controls ignored by byte limit")}
+    }
+    let ignored = try model.decode([1000], Tokenizer.DecodeOptions(maximum_bytes:0, special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error {panic(error.detail)}
+    assert(ignored == "")
+    match model.decode([1000, 9223372036854775807], Tokenizer.DecodeOptions(special_tokens:Tokenizer.DecodeSpecialTokens.skip)) {
+        failure(error) => {assert(error.kind == Tokenizer.DecodeErrorKind.unknown_id && error.position == 1)}
+        success(_) => {panic("unknown ID skipped with controls")}
+    }
+}
+
+test "special suffix links preserve earliest longest match after false prefixes" {
+    var config = special_config()
+    config.append(Tokenizer.SpecialToken(surface:"ababa!", id:2000, role:Tokenizer.SpecialRole.control("outer")))
+    config.append(Tokenizer.SpecialToken(surface:"baba!", id:2001, role:Tokenizer.SpecialRole.control("suffix")))
+    config.append(Tokenizer.SpecialToken(surface:"é<c>", id:2002, role:Tokenizer.SpecialRole.control("unicode")))
+    var model = try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "a b\nab c\n",
+        Tokenizer.LoadOptions(special_tokens:config)) else error {panic(error.detail)}
+    let input = "ababababa! é<c> <c>long"
+    let encoded = try model.encode(input, Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1002,1003,2000,2001,2002]))) else error {panic(error.detail)}
+    var controls:int[] = []
+    for piece in encoded.pieces() {
+        if piece.special != null {controls.append(piece.id)}
+        if piece.id == 2000 {assert(piece.span!.start == 4 && piece.span!.end == 10)}
+        if piece.id == 2002 {assert(piece.span!.start == 11 && piece.span!.end == 16)}
+    }
+    assert(controls.count() == 3 && controls[0] == 2000 && controls[1] == 2002 && controls[2] == 1003)
+    assert((try model.decode(encoded.ids()) else error {panic(error.detail)}) == input)
+}

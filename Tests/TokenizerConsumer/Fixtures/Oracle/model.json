@@ -1,0 +1,82 @@
+{
+  "vocabulary_sha256": "29ad93e0dce1a6bffe98a26f514e1ce8e88fb1cb40f0629325e171a7a1346b5d",
+  "merges": [
+    [
+      "a",
+      "b"
+    ],
+    [
+      "b",
+      "c"
+    ],
+    [
+      "ab",
+      "c"
+    ],
+    [
+      "a",
+      "a"
+    ],
+    [
+      "aa",
+      "aa"
+    ],
+    [
+      "aaaa",
+      "aa"
+    ],
+    [
+      "a",
+      "Ġ"
+    ],
+    [
+      "Ġ",
+      "b"
+    ],
+    [
+      "aĠ",
+      "b"
+    ],
+    [
+      "Ã",
+      "©"
+    ]
+  ],
+  "controls": [
+    {
+      "surface": "<|bos|>",
+      "id": 274,
+      "role": "bos"
+    },
+    {
+      "surface": "<|eos|>",
+      "id": 275,
+      "role": "eos"
+    },
+    {
+      "surface": "<|pad|>",
+      "id": 276,
+      "role": "padding"
+    },
+    {
+      "surface": "<|unk|>",
+      "id": 277,
+      "role": "unknown"
+    },
+    {
+      "surface": "<ctrl>",
+      "id": 278,
+      "role": "control(\"short\")"
+    },
+    {
+      "surface": "<ctrl>long",
+      "id": 279,
+      "role": "control(\"long\")"
+    }
+  ],
+  "options": {
+    "add_prefix_space": false,
+    "cache_capacity": 0,
+    "normalized_specials": true
+  }
+}

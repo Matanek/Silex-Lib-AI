@@ -9,6 +9,7 @@ public enum LoadErrorKind {
     invalid_vocabulary
     incomplete_alphabet
     invalid_merges
+    invalid_special_tokens
     limit_exceeded
     unsupported_model
 }
@@ -30,15 +31,20 @@ public struct LoadOptions {
     let maximum_merge_rules:int = 100_000
     let normalization:Normalization = Normalization.identity
     let pre_tokenizer:PreTokenizer = PreTokenizer.none
+    let special_tokens:SpecialToken[] = []
+    let maximum_special_tokens:int = 256
+    let maximum_special_bytes:int = 65536
 }
 
 public struct EncodeOptions {
     let maximum_input_bytes:int = 16 * 1024 * 1024
     let maximum_tokens:int = 16 * 1024 * 1024
     let maximum_normalized_bytes:int = 16 * 1024 * 1024
+    let special_input:SpecialInput = SpecialInput.reject
+    let boundary_tokens:BoundaryTokens = BoundaryTokens.none
 }
 
-public enum EncodeErrorKind { invalid_options; limit_exceeded }
+public enum EncodeErrorKind { invalid_options; limit_exceeded; forbidden_special }
 public struct EncodeError {
     let kind:EncodeErrorKind
     let detail:str
@@ -46,6 +52,7 @@ public struct EncodeError {
 
 public struct DecodeOptions {
     let maximum_bytes:int = 16 * 1024 * 1024
+    let special_tokens:DecodeSpecialTokens = DecodeSpecialTokens.include
 }
 
 public enum DecodeErrorKind { invalid_options; unknown_id; invalid_utf8; limit_exceeded }
@@ -64,6 +71,7 @@ public struct Piece {
     let id:int
     let bytes:uint8[]
     let span:Span?
+    let special:SpecialRole? = null
 }
 
 public struct Encoding {
@@ -94,13 +102,15 @@ public class Tokenizer {
     private let normalization:Normalization
     private let splitter:Regex?
     private let rules:Dictionary<TokenPair, MergeRule>
+    private let controls:SpecialTable
 
-    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>, normalization:Normalization, splitter:Regex?, rules:Dictionary<TokenPair, MergeRule>) {
+    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>, normalization:Normalization, splitter:Regex?, rules:Dictionary<TokenPair, MergeRule>, controls:SpecialTable) {
         self.byte_ids = byte_ids
         self.vocabulary = vocabulary
         self.normalization = normalization
         self.splitter = splitter
         self.rules = rules
+        self.controls = controls
     }
 
     static func load_bpe(vocabulary_path:str, merges_path:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
@@ -131,10 +141,40 @@ public class Tokenizer {
                 kind:EncodeErrorKind.limit_exceeded, detail:"normalized text exceeds the configured encoding limit"
             ))
         }
-        let boundaries = text_segments(source, self.splitter)
+        let allowed = try self.controls.allowed(options.special_input)
+        let added = try self.controls.boundaries(options.boundary_tokens)
         let bytes = UTF8.bytes(source)
+        let matches = self.controls.find(bytes, options.special_input)
+        var boundaries:Span[] = []
         var pieces:Piece[] = []
-        for boundary in boundaries {
+        if added.first >= 0 { try append_control(pieces, self.controls.values[added.first], null, options.maximum_tokens) }
+        var cursor = 0
+        for found in matches {
+            if !allowed.contains(self.controls.values[found.index].id) {
+                return Result<Encoding, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.forbidden_special,
+                    detail:"literal special token is not allowed at byte $(found.start)"))
+            }
+            try self.encode_region(bytes, cursor, found.start, pieces, boundaries, options.maximum_tokens)
+            let span = Span(start:found.start, end:found.end)
+            boundaries.append(span)
+            try append_control(pieces, self.controls.values[found.index], span, options.maximum_tokens)
+            cursor = found.end
+        }
+        try self.encode_region(bytes, cursor, bytes.count(), pieces, boundaries, options.maximum_tokens)
+        if added.last >= 0 { try append_control(pieces, self.controls.values[added.last], null, options.maximum_tokens) }
+        return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))
+    }
+
+    func special_tokens() SpecialToken[] { return self.controls.values }
+
+    private func encode_region(bytes:@uint8[], start:int, end:int, pieces:&Piece[], boundaries:&Span[], maximum_tokens:int) Result<void, EncodeError> {
+        if start == end { return Result<void, EncodeError>.success() }
+        let view = @bytes[start:end]
+        // Regions terminate at validated UTF-8 special surfaces, hence scalar boundaries.
+        let text = try UTF8.decode(view) else { panic("invalid internal UTF-8 region") }
+        for relative in text_segments(text, self.splitter) {
+            let boundary = Span(start:start + relative.start, end:start + relative.end)
+            boundaries.append(boundary)
             var segment:Piece[] = []
             if self.rules.count() == 0 {
                 var index = boundary.start
@@ -149,14 +189,14 @@ public class Tokenizer {
                 segment = merger.pieces(bytes)
             }
             for piece in segment {
-                if pieces.count() >= options.maximum_tokens {
-                    return Result<Encoding, EncodeError>.failure(EncodeError(
+                if pieces.count() >= maximum_tokens {
+                    return Result<void, EncodeError>.failure(EncodeError(
                         kind:EncodeErrorKind.limit_exceeded, detail:"encoding exceeds the configured token limit"))
                 }
                 pieces.append(piece)
             }
         }
-        return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))
+        return Result<void, EncodeError>.success()
     }
 
     func decode_bytes(ids:int[], options:DecodeOptions = DecodeOptions()) Result<uint8[], DecodeError> {
@@ -168,6 +208,17 @@ public class Tokenizer {
         var result:uint8[] = []
         var index = 0
         for id in ids {
+            if control = self.controls.by_id.find(id) {
+                if options.special_tokens == DecodeSpecialTokens.skip { index++; continue }
+                let bytes = UTF8.bytes(control.surface)
+                if bytes.count() > options.maximum_bytes - result.count() {
+                    return Result<uint8[], DecodeError>.failure(DecodeError(kind:DecodeErrorKind.limit_exceeded,
+                        position:index, detail:"decoded bytes exceed the configured limit"))
+                }
+                for byte in bytes { result.append(byte) }
+                index++
+                continue
+            }
             let found = self.vocabulary.find(id)
             if found == null {
                 return Result<uint8[], DecodeError>.failure(DecodeError(
