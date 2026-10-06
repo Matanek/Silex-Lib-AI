@@ -34,8 +34,8 @@ func main() {
 
 The output is `Bonjour é 世界 👩‍💻`, followed by `29 tokens`. Without merges,
 one token represents one byte, so multibyte characters produce multiple IDs.
-Vocabulary tokens may also represent several bytes when decoding, even though
-this first encoder does not emit them.
+Model merges may produce tokens representing several bytes; decoding restores
+their exact byte sequence.
 
 An [executable consumer](../../Tests/TokenizerConsumer/Example.sx) provides the
 same flow with a versioned miniature alphabet. From the development workspace
@@ -266,6 +266,15 @@ func main() {
 ```
 
 Output: `1000`, `258`, `1001`, then `abc`.
+
+## Development compatibility
+
+The tokenizer must be tested with the matching Silex and STD candidates.
+Installing the published graph on October 6, 2026 fails on `UTF8.byte_count`,
+which is absent from STD 0.22.0. The planned route is AI 0.2.0 with STD 0.23.0
+and a forthcoming Silex version containing the qualified fixes. These versions
+are not presented as published. The AI 0.1.0 tag retains its original content
+without a tokenizer.
 
 ## Verified compatibility
 

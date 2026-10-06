@@ -35,8 +35,8 @@ func main() {
 
 La sortie contient `Bonjour é 世界 👩‍💻`, puis `29 tokens`. Sans fusion,
 un token représente un octet ; un caractère multioctet produit donc plusieurs
-IDs. Les tokens du modèle peuvent également désigner plusieurs octets au
-décodage, même s’ils ne sont pas émis par ce premier encodeur.
+IDs. Les fusions du modèle peuvent produire des tokens de plusieurs octets ;
+le décodage reconstruit leur séquence exacte.
 
 Un [consommateur exécutable](../../Tests/TokenizerConsumer/Example.sx) fournit
 le même parcours avec un alphabet miniature versionné. Depuis la racine du
@@ -275,6 +275,15 @@ func main() {
 ```
 
 Sortie : `1000`, `258`, `1001`, puis `abc`.
+
+## Compatibilité de développement
+
+Le tokenizer doit être testé avec les candidats Silex et STD correspondants.
+L’installation isolée du graphe publié le 6 octobre 2026 échoue sur
+`UTF8.byte_count`, absent de STD 0.22.0. La route prévue est AI 0.2.0 avec
+STD 0.23.0 et une prochaine version Silex contenant les corrections qualifiées.
+Ces versions ne sont pas présentées comme publiées. Le tag AI 0.1.0 conserve
+son contenu original sans tokenizer.
 
 ## Compatibilité vérifiée
 

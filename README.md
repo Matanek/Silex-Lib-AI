@@ -30,4 +30,7 @@ silex install AI
 - [French documentation](Docs/FR/README.md)
 - [English documentation](Docs/EN/README.md)
 
-The package requires Silex 0.44.1 or newer.
+The published AI 0.1.0 package requires Silex 0.44.0 or newer. The tokenizer is available
+in the development candidate and requires the matching Silex and STD changes;
+published AI 0.1.0 does not include it. See the [development compatibility
+notes](Docs/EN/Tokenizer.md#development-compatibility).

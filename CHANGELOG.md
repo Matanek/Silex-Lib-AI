@@ -2,23 +2,27 @@
 
 ## [Unreleased]
 
-- Check the total budget including controls and BOS/EOS before final pieces,
-  after merging when required; qualify exact limits and hostile inputs.
+- Add `AI.Tokenizer`: immutable byte-level BPE models loaded from files or memory,
+  identity/NFC/NFKC normalization and none/GPT-2 segmentation, portable IDs,
+  owned pieces and UTF-8 spans, and byte or strict UTF-8 decoding.
+- Apply merges by rank then leftmost occurrence within pre-tokenization
+  boundaries; structured errors and configurable limits check external models,
+  inputs and outputs. The total budget includes controls and BOS/EOS, after
+  merging when necessary, before final pieces are materialized.
+- Configure immutable controls with roles, explicit permission, BOS/EOS insertion
+  and include/skip decoding. The pinned Tokenizers 0.22.1 oracle qualifies 594
+  cases of the synthetic model; Python remains confined to development tools.
+- Provide a public consumer, FR/EN guides and a reproducible native campaign
+  with bounded sequential runs. The tokenizer uses STD and JSON; other modules
+  retain their dependencies.
+- Add `AI.Evolution` to rank and select application genomes, preserve elites,
+  and compose deterministic crossover and mutation.
+- Add `AI.NeuroEvolution.FixedStructure` to evolve `Tensor.Neural` parameters,
+  then `AI.NeuroEvolution.EvolvingStructure` for innovation tracking, structural
+  mutation, crossover and feed-forward speciation. The FixedStructure name
+  makes the adapter boundary explicit.
 
-- Add immutable role-based controls, explicit input policies, BOS/EOS and included/skipped decoding; pin Tokenizers 0.22.1 across 594 multilingual and adversarial cases, with no Python dependency in ordinary calls or tests.
-
-- Apply BPE merges by rank then leftmost occurrence, preserving boundaries
-  and spans; bound the fused token count without rescanning the sequence.
-
-- Add immutable identity/NFC/NFKC and none/GPT-2 loading choices, expose
-  normalized segment spans, and bound normalized size separately.
-
-- Add `AI.Tokenizer` to load a complete byte-level alphabet,
-  parse the same model from memory, encode portable IDs and decode exact bytes
-  or strict UTF-8. Owned encodings
-  include UTF-8 spans, structured errors and configurable limits.
-- Validate vocabulary and merge rules; explicitly reject models with merges
-  until their encoding is qualified. Unicode normalization, pre-tokenization
-  and controls remain outside this first surface.
-- Add a public consumer and FR/EN guide. New required STD calls will be accounted
-  for when preparing versions; existing tags do not retroactively gain tokenizer support.
+The tokenizer remains a development surface: published AI 0.1.0 does not contain
+it, and published STD 0.22.0 lacks some required APIs. The next AI version will
+be at least 0.2.0, after its published prerequisites are qualified; existing tags
+do not retroactively acquire these additions.

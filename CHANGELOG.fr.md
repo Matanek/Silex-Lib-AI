@@ -2,25 +2,27 @@
 
 ## [Unreleased]
 
-- Vérifier le budget total comprenant contrôles et BOS/EOS avant les morceaux
-  finaux, après fusion lorsque nécessaire ; qualifier les seuils exacts et
-  entrées hostiles.
+- Ajouter `AI.Tokenizer` : modèles BPE byte-level immuables chargés depuis
+  fichiers ou mémoire, normalisation identity/NFC/NFKC et découpage none/GPT-2,
+  IDs portables, morceaux et spans UTF-8 possédés, décodage octets ou UTF-8 strict.
+- Appliquer les fusions par rang puis occurrence gauche, dans les frontières
+  de pré-tokenisation ; erreurs structurées et limites configurables contrôlent
+  modèles externes, entrées et sorties. Le budget total comprend les contrôles
+  et BOS/EOS, après fusion lorsque nécessaire, avant les morceaux finaux.
+- Configurer des contrôles immuables avec rôles, autorisation explicite, ajout
+  BOS/EOS et décodage inclus/ignoré. L’oracle Tokenizers 0.22.1 épinglé qualifie
+  594 cas du modèle synthétique ; Python reste réservé aux outils de développement.
+- Fournir le consommateur public, les guides FR/EN et une campagne native
+  reproductible avec exécutions séquentielles bornées. Le tokenizer utilise STD
+  et JSON ; les autres modules conservent leurs dépendances.
+- Ajouter `AI.Evolution` pour classer et sélectionner des génomes applicatifs,
+  conserver les élites et composer croisement/mutation déterministes.
+- Ajouter `AI.NeuroEvolution.FixedStructure` pour faire évoluer les paramètres
+  de `Tensor.Neural`, puis `AI.NeuroEvolution.EvolvingStructure` pour suivre
+  innovations, mutations structurelles, croisement et spéciation feed-forward.
+  Le nom FixedStructure explicite la frontière de l’adaptateur.
 
-- Ajout des contrôles immuables avec rôles, politiques explicites, BOS/EOS et décodage inclus/ignoré ; oracle Tokenizers 0.22.1 épinglé sur 594 cas multilingues et adversariaux, sans dépendance Python dans les appels ou tests ordinaires.
-
-- Appliquer les fusions BPE par rang puis occurrence gauche, en conservant les
-  frontières et spans ; borner les tokens après fusion, sans rescannage global.
-
-- Ajouter les choix immuables `identity`/NFC/NFKC et `none`/GPT-2 au chargement ;
-  exposer les spans de segments du texte normalisé et borner sa taille séparément.
-
-- Ajouter `AI.Tokenizer` pour charger un alphabet byte-level complet,
-  analyser aussi un modèle en mémoire, encoder en IDs portables et décoder les
-  octets ou du UTF-8 strict. Encodages
-  possédés avec spans UTF-8, erreurs structurées et limites configurables.
-- Valider vocabulaire et fusions ; refuser explicitement les modèles contenant
-  des fusions tant que leur encodage n’est pas qualifié. Normalisation Unicode,
-  pré-tokenisation et contrôles restent hors de cette première surface.
-- Ajouter un consommateur public et un guide FR/EN. Les nouveaux appels STD
-  requis seront pris en compte lors de la préparation de version ; aucun tag
-  existant n’acquiert rétroactivement le tokenizer.
+Le tokenizer reste une surface de développement : AI 0.1.0 publié ne le contient
+pas et STD 0.22.0 publié ne fournit pas toutes les API requises. La prochaine
+version AI sera au minimum 0.2.0, après qualification de ses prérequis publiés ;
+aucun tag existant n’acquiert rétroactivement ces ajouts.
