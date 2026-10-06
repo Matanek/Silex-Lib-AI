@@ -2,10 +2,9 @@
 
 `AI.Tokenizer` charge un alphabet byte-level immuable, encode du texte UTF-8
 en IDs `int[]` et reconstruit les octets ou le texte normalisé. Les modèles
-**sans règle de fusion** sont pris en charge avec normalisation `identity`
-(par défaut), NFC ou NFKC, et pré-tokenisation `none` (par défaut) ou `gpt2`.
-Un modèle contenant des fusions est refusé avec `LoadErrorKind.unsupported_model` :
-ses règles ne sont jamais ignorées.
+BPE byte-level offrent la normalisation `identity` (par défaut), NFC ou NFKC,
+et la pré-tokenisation `none` (par défaut) ou `gpt2`. Le couple vocabulaire/règles
+est validé une fois au chargement ; aucun fichier n’est relu durant l’encodage.
 
 ## Charger, encoder et décoder
 
@@ -129,6 +128,48 @@ fixtures ; FEFF et 001C ne sont pas des blancs Unicode. La référence de fixtur
 indépendante Node utilise Unicode 16.0 sur des caractères stables sélectionnés :
 elle qualifie ce corpus, pas le tokenizer GPT-2 complet ni toute Unicode 17.
 
+## Appliquer les fusions du modèle
+
+L’ordre des lignes de `merges.txt` définit le rang. Parmi les paires actuellement
+admissibles, le rang le plus bas gagne ; à rang égal, l’occurrence la plus à
+gauche est fusionnée. Une fusion peut rendre une nouvelle paire admissible,
+même si sa règle apparaît plus tôt. Aucune fusion ne traverse les frontières de
+pré-tokenisation. Les doublons, références inconnues et résultats absents du
+vocabulaire sont refusés au chargement.
+
+Ce [programme exécutable](../../Tests/TokenizerConsumer/BPEExample.sx) charge
+une fixture miniature où `a b` produit l’ID 256 et `ab c` l’ID 258 :
+
+```sx
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"),
+        "a b\nab c\n") else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc") else error { panic(error.detail) }
+    for piece in encoding.pieces() {
+        print(piece.id)
+        print("$(piece.span!.start):$(piece.span!.end)")
+    }
+    print(try tokenizer.decode(encoding.ids()) else error { panic(error.detail) })
+}
+```
+
+Sortie :
+
+```text
+258
+0:3
+abc
+```
+
+Le modèle sans règle conserve un token par octet. Avec des fusions,
+`maximum_tokens` borne le nombre final de tokens ; deux octets fusionnés peuvent
+ainsi tenir dans une limite d’un token. Les octets d’un morceau fusionné et son
+span couvrent exactement les morceaux contigus remplacés. Un morceau peut
+encore couper un scalaire UTF-8 ; inspectez ses octets ou décodez toute la séquence.
+Les tables et candidats de fusion restent privés, sans cache global mutable.
+
 ## Inspecter l’encodage
 
 `encoding.ids()` rend une liste détachée utilisable par une frontière de modèle.
@@ -156,7 +197,7 @@ Tensor, GFX, GPU ou Python ; les dépendances des autres modules AI demeurent.
 
 `Tokenizer.load_bpe` retourne `Result<Tokenizer, LoadError>`. `kind`, `path` et
 `detail` distinguent I/O, options invalides, JSON, vocabulaire, alphabet incomplet,
-règles invalides, limite dépassée et modèle non encore pris en charge.
+règles invalides et limite dépassée.
 Les IDs fractionnaires, hors plage ou dupliqués, tokens vides/hors alphabet,
 fusions inconnues ou dupliquées sont refusés avant usage.
 
@@ -178,8 +219,8 @@ token.
 
 ## Compatibilité de cette première surface
 
-Les fusions BPE, tokens spéciaux et BOS/EOS ne sont pas encore disponibles. Le nom
-byte-level décrit l’alphabet et l’aller-retour ;
+Les tokens spéciaux et BOS/EOS ne sont pas encore disponibles. Le nom
+byte-level décrit l’alphabet et le pipeline ordinaire ;
 il ne constitue pas une qualification différentielle du pipeline GPT-2 complet.
 Aucun entraînement, téléchargement de modèle, padding, batching ou conversion
 tensorielle n’est fourni. Les modèles restent des fichiers appartenant à

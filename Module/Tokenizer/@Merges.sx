@@ -1,0 +1,143 @@
+use STD.Collections.Dictionary
+
+struct TokenPair { let left:int; let right:int }
+struct MergeRule { let rank:int; let id:int }
+
+func pair_hash(pair:@TokenPair) uint {
+    let left = pair.left as uint
+    let right = pair.right as uint
+    return left ^ (right << 1) ^ (right >> 63)
+}
+
+func pair_equal(left:@TokenPair, right:@TokenPair) bool {
+    return left.left == right.left && left.right == right.right
+}
+
+func empty_rules() Dictionary<TokenPair, MergeRule> {
+    return Dictionary<TokenPair, MergeRule>(pair_hash, pair_equal)
+}
+
+// A node stays at its original byte index; unlinking never shifts the sequence.
+struct MergeNode {
+    var id:int
+    var first:int
+    var last:int
+    var previous:int
+    var next:int
+    var generation:int
+    var active:bool
+}
+
+struct MergeCandidate {
+    let rank:int
+    let id:int
+    let left:int
+    let right:int
+    let left_generation:int
+    let right_generation:int
+}
+
+func candidate_before(left:@MergeCandidate, right:@MergeCandidate) bool {
+    return left.rank < right.rank || (left.rank == right.rank && left.left < right.left)
+}
+
+class MergeHeap {
+    private var entries:MergeCandidate[] = []
+
+    func push(candidate:MergeCandidate) {
+        self.entries.append(candidate)
+        var index = self.entries.count() - 1
+        while index > 0 {
+            let parent = (index - 1) / 2
+            if !candidate_before(self.entries[index], self.entries[parent]) { break }
+            self.entries.swap(index, parent)
+            index = parent
+        }
+    }
+
+    func pop() MergeCandidate? {
+        if self.entries.count() == 0 { return null }
+        let result = self.entries[0]
+        let last = self.entries.take_last()
+        if self.entries.count() == 0 { return result }
+        self.entries[0] = last
+        var index = 0
+        // Only internal nodes have children: 2*index+1 cannot overflow count.
+        while index < self.entries.count() / 2 {
+            var child = index * 2 + 1
+            if child + 1 < self.entries.count() &&
+                candidate_before(self.entries[child + 1], self.entries[child]) { child++ }
+            if !candidate_before(self.entries[child], self.entries[index]) { break }
+            self.entries.swap(index, child)
+            index = child
+        }
+        return result
+    }
+}
+
+class SegmentMerger {
+    private let rules:Dictionary<TokenPair, MergeRule>
+    private var nodes:MergeNode[] = []
+    private var candidates:MergeHeap = MergeHeap()
+
+    init(bytes:@uint8[], boundary:Span, byte_ids:@int[], rules:Dictionary<TokenPair, MergeRule>) {
+        self.rules = rules
+        var index = boundary.start
+        while index < boundary.end {
+            let slot = index - boundary.start
+            var next = slot + 1
+            if index + 1 == boundary.end { next = -1 }
+            self.nodes.append(MergeNode(id:byte_ids[bytes[index] as int], first:index, last:index + 1,
+                previous:slot - 1, next:next, generation:0, active:true))
+            index++
+        }
+        index = 0
+        while index + 1 < self.nodes.count() { self.schedule(index); index++ }
+    }
+
+    func schedule(index:int) {
+        if index < 0 { return }
+        let left = self.nodes[index]
+        if !left.active || left.next < 0 { return }
+        let right = self.nodes[left.next]
+        if rule = self.rules.find(TokenPair(left:left.id, right:right.id)) {
+            self.candidates.push(MergeCandidate(rank:rule.rank, id:rule.id, left:index,
+                right:left.next, left_generation:left.generation, right_generation:right.generation))
+        }
+    }
+
+    func merge() {
+        while candidate = self.candidates.pop() {
+            let left = self.nodes[candidate.left]
+            let right = self.nodes[candidate.right]
+            if !left.active || !right.active || left.next != candidate.right ||
+                left.generation != candidate.left_generation || right.generation != candidate.right_generation {
+                continue
+            }
+            self.nodes[candidate.left].id = candidate.id
+            self.nodes[candidate.left].last = right.last
+            self.nodes[candidate.left].next = right.next
+            self.nodes[candidate.left].generation++
+            self.nodes[candidate.right].active = false
+            if right.next >= 0 { self.nodes[right.next].previous = candidate.left }
+            self.schedule(left.previous)
+            self.schedule(candidate.left)
+        }
+    }
+
+    func pieces(bytes:@uint8[]) Piece[] {
+        self.merge()
+        var result:Piece[] = []
+        var index = 0
+        while index >= 0 && index < self.nodes.count() {
+            let node = self.nodes[index]
+            // Materialize bytes once per final piece, never on a candidate merge.
+            var values:uint8[] = []
+            var cursor = node.first
+            while cursor < node.last { values.append(bytes[cursor]); cursor++ }
+            result.append(Piece(id:node.id, bytes:values, span:Span(start:node.first, end:node.last)))
+            index = node.next
+        }
+        return result
+    }
+}

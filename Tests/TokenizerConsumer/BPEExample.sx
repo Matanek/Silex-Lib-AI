@@ -1,0 +1,12 @@
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"),
+        "a b\nab c\n") else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc") else error { panic(error.detail) }
+    for piece in encoding.pieces() {
+        print(piece.id)
+        print("$(piece.span!.start):$(piece.span!.end)")
+    }
+    print(try tokenizer.decode(encoding.ids()) else error { panic(error.detail) })
+}

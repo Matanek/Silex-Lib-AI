@@ -1,0 +1,98 @@
+use AI.Tokenizer
+
+func bpe_model(rules:str, profile:Tokenizer.PreTokenizer = Tokenizer.PreTokenizer.none,
+    mode:Tokenizer.Normalization = Tokenizer.Normalization.identity) Tokenizer {
+    return try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), rules,
+        Tokenizer.LoadOptions(pre_tokenizer:profile, normalization:mode)) else error { panic(error.detail) }
+}
+
+func bpe_check(model:Tokenizer, input:str, ids:int[], starts:int[], ends:int[], normalized:str) {
+    let result = try model.encode(input) else error { panic(error.detail) }
+    let actual = result.ids()
+    assert(actual.count() == ids.count())
+    var index = 0
+    var cursor = 0
+    for piece in result.pieces() {
+        assert(piece.id == ids[index], "ID at $(index): $(piece.id)")
+        assert(piece.span!.start == starts[index] && piece.span!.end == ends[index])
+        assert(piece.span!.start == cursor && piece.bytes.count() == ends[index] - starts[index])
+        var contained = false
+        for segment in result.segments() {
+            if starts[index] >= segment.start && ends[index] <= segment.end { contained = true }
+        }
+        assert(contained, "merged piece crossed a segment")
+        cursor = ends[index]
+        index++
+    }
+    assert(result.normalized_text() == normalized)
+    let decoded = try model.decode(actual) else error { panic(error.detail) }
+    assert(decoded == normalized)
+}
+
+test "BPE selects the lowest available rank and creates nested candidates" {
+    var left = bpe_model("a b\nb c\nab c\n")
+    bpe_check(left, "abc", [258], [0], [3], "abc")
+    var right = bpe_model("b c\na b\nab c\n")
+    bpe_check(right, "abc", [97, 257], [0, 1], [1, 3], "abc")
+    var earlier = bpe_model("aa aa\na a\n")
+    bpe_check(earlier, "aaaa", [260], [0], [4], "aaaa")
+}
+
+test "BPE breaks equal-rank ties to the left and rejects stale overlapping candidates" {
+    var pairs = bpe_model("a a\n")
+    bpe_check(pairs, "aaaaa", [259, 259, 97], [0, 2, 4], [2, 4, 5], "aaaaa")
+    var nested = bpe_model("a a\naa aa\n")
+    bpe_check(nested, "aaaaaa", [260, 259], [0, 4], [4, 6], "aaaaaa")
+    var neighbours = bpe_model("b c\na b\nbc a\n")
+    bpe_check(neighbours, "abca", [97, 268], [0, 1], [1, 4], "abca")
+}
+
+test "BPE remains within GPT2 boundaries without losing spaces or offsets" {
+    let rules = "a Ġ\naĠ b\nĠ b\n"
+    var whole = bpe_model(rules)
+    bpe_check(whole, "a b", [271], [0], [3], "a b")
+    var split = bpe_model(rules, Tokenizer.PreTokenizer.gpt2)
+    bpe_check(split, "a b", [97, 270], [0, 1], [1, 3], "a b")
+    var words = bpe_model("a b\nb c\nab c\n", Tokenizer.PreTokenizer.gpt2)
+    bpe_check(words, "abc abc", [258, 32, 258], [0, 3, 4], [3, 4, 7], "abc abc")
+}
+
+test "BPE assigns byte spans after normalization and retains nonUTF8 byte pieces" {
+    var normal = bpe_model("Ã ©\n", Tokenizer.PreTokenizer.gpt2, Tokenizer.Normalization.nfc)
+    bpe_check(normal, "e\u{301}🙂", [272, 240, 159, 153, 130], [0, 2, 3, 4, 5], [2, 3, 4, 5, 6], "é🙂")
+    var unmerged = bpe_model("")
+    bpe_check(unmerged, "é", [195, 169], [0, 1], [1, 2], "é")
+    let result = try normal.encode("") else error { panic(error.detail) }
+    assert(result.count() == 0 && result.segments().count() == 0)
+}
+
+test "BPE token limits apply to the fused result rather than the byte count" {
+    var model = bpe_model("a b\n")
+    let result = try model.encode("ab", Tokenizer.EncodeOptions(maximum_input_bytes:2,
+        maximum_normalized_bytes:2, maximum_tokens:1)) else error { panic(error.detail) }
+    assert(result.count() == 1 && result.ids()[0] == 256)
+    match model.encode("aba", Tokenizer.EncodeOptions(maximum_tokens:1)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("fused token limit ignored") }
+    }
+    match model.encode("ab", Tokenizer.EncodeOptions(maximum_tokens:0)) {
+        failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
+        success(_) => { panic("zero token limit ignored") }
+    }
+    let empty = try model.encode("", Tokenizer.EncodeOptions(maximum_tokens:0)) else error { panic(error.detail) }
+    assert(empty.count() == 0)
+}
+
+test "BPE encodings stay detached when the immutable model is shared" {
+    var model = bpe_model("a b\nab c\n")
+    var shared = model
+    let first = try model.encode("abc") else error { panic(error.detail) }
+    var pieces = first.pieces()
+    var bytes = pieces[0].bytes
+    bytes[0] = 0
+    pieces[0] = Tokenizer.Piece(id:0, bytes:bytes, span:null)
+    var ids = first.ids()
+    ids[0] = -1
+    bpe_check(shared, "abc", [258], [0], [3], "abc")
+    assert(first.pieces()[0].bytes[0] == 97 && first.pieces()[0].span!.end == 3)
+}

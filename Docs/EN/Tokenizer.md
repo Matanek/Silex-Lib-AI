@@ -1,10 +1,10 @@
 # Encode and reconstruct byte-level text
 
 `AI.Tokenizer` loads an immutable byte-level alphabet, encodes UTF-8 text into
-`int[]` IDs and reconstructs exact bytes or normalized text. Models **without
-merge rules** support `identity` normalization (default), NFC or NFKC, and
-`none` pre-tokenization (default) or `gpt2`. Models with merges fail with
-`LoadErrorKind.unsupported_model`; rules are never silently ignored.
+`int[]` IDs and reconstructs exact bytes or normalized text. Byte-level BPE
+models support `identity` normalization (default), NFC or NFKC, and `none`
+pre-tokenization (default) or `gpt2`. The vocabulary/rules pair is validated once
+when loading; encoding never rereads model files.
 
 ## Load, encode and decode
 
@@ -124,6 +124,47 @@ whitespace. The independent Node fixture reference uses Unicode 16.0 for
 selected stable characters: it qualifies this corpus, not the complete GPT-2
 tokenizer or all Unicode 17 characters.
 
+## Apply the model merge rules
+
+The order of lines in `merges.txt` defines rank. Among currently eligible pairs,
+the lowest rank wins; at equal rank, the leftmost occurrence is merged. A merge
+may make a new pair eligible, even if its rule appears earlier. No merge crosses
+a pre-tokenization boundary. Duplicate rules, unknown references and results
+missing from the vocabulary fail at loading.
+
+This [executable program](../../Tests/TokenizerConsumer/BPEExample.sx) loads a
+miniature fixture where `a b` yields ID 256 and `ab c` yields ID 258:
+
+```sx
+use AI.Tokenizer
+
+func main() {
+    var tokenizer = try Tokenizer.parse_bpe(embed_text("Fixtures/bpe-vocab.json"),
+        "a b\nab c\n") else error { panic(error.detail) }
+    let encoding = try tokenizer.encode("abc") else error { panic(error.detail) }
+    for piece in encoding.pieces() {
+        print(piece.id)
+        print("$(piece.span!.start):$(piece.span!.end)")
+    }
+    print(try tokenizer.decode(encoding.ids()) else error { panic(error.detail) })
+}
+```
+
+Output:
+
+```text
+258
+0:3
+abc
+```
+
+Models without rules retain one token per byte. With merges, `maximum_tokens`
+bounds the final token count; two merged bytes can therefore fit a one-token
+limit. A merged piece's bytes and span cover exactly the contiguous pieces it
+replaces. A piece may still cut a UTF-8 scalar; inspect its bytes or decode the
+complete sequence. Merge tables and candidates remain private, without a mutable
+global cache.
+
 ## Inspect the encoding
 
 `encoding.ids()` returns a detached list usable at a model boundary.
@@ -151,7 +192,7 @@ other AI modules remain in place.
 
 `Tokenizer.load_bpe` returns `Result<Tokenizer, LoadError>`. `kind`, `path` and
 `detail` distinguish I/O, invalid options, JSON, vocabulary, incomplete alphabet,
-invalid rules, exceeded limits and unsupported models. Fractional, out-of-range
+invalid rules and exceeded limits. Fractional, out-of-range
 or duplicate IDs, empty/out-of-alphabet tokens and unknown or duplicate merges
 are rejected before use.
 
@@ -171,7 +212,7 @@ Decoding checks remaining capacity before appending a token.
 
 ## Compatibility of this first surface
 
-BPE merges, special tokens and BOS/EOS are not yet available. Byte-level describes
+Special tokens and BOS/EOS are not yet available. Byte-level describes
 the alphabet and round trip; it does not
 qualify the complete GPT-2 pipeline against an independent oracle. No training,
 model downloads, padding, batching or tensor conversion is provided. Model files

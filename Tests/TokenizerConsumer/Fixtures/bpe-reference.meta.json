@@ -1,0 +1,7 @@
+{
+  "seed": 52031,
+  "models": 4,
+  "cases": 112,
+  "method": "independent naive rescan, rank then left position",
+  "scope": "selected ASCII without pretokenization; sparse 64-bit external IDs"
+}

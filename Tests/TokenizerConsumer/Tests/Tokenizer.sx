@@ -221,12 +221,13 @@ test "invalid model limits are rejected even before opening files" {
         Tokenizer.LoadOptions(maximum_merge_rules:-1))
 }
 
-test "merges are validated and unsupported fusion models are never silently ignored" {
+test "merges are validated and valid fusion models apply their rules" {
     expect_load_error("vocab.json", "invalid-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
     expect_load_error("vocab.json", "unknown-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
     expect_load_error("with-merge.json", "duplicate-merges.txt", Tokenizer.LoadErrorKind.invalid_merges)
     expect_load_error("with-merge.json", "extra-spaces.txt", Tokenizer.LoadErrorKind.invalid_merges)
-    expect_load_error("with-merge.json", "valid-merges.txt", Tokenizer.LoadErrorKind.unsupported_model)
+    var merged = loaded("with-merge.json", "valid-merges.txt")
+    assert_ids(encoded(merged, "ab").ids(), [1000])
     for name in ["crlf-merges.txt", "empty-merges.txt"] {
         match Tokenizer.load_bpe(fixture("vocab.json"), fixture(name)) {
             success(var tokenizer) => { assert_ids(encoded(tokenizer, "a").ids(), [97]) }
@@ -276,8 +277,6 @@ test "file and in memory model loading use the same validation and results" {
         failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.limit_exceeded) }
         success(_) => { panic("in memory byte limit ignored") }
     }
-    match Tokenizer.parse_bpe(embed_text("../Fixtures/with-merge.json"), "a b\n") {
-        failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.unsupported_model) }
-        success(_) => { panic("in memory merges ignored") }
-    }
+    var merged = try Tokenizer.parse_bpe(embed_text("../Fixtures/with-merge.json"), "a b\n") else error { panic(error.detail) }
+    assert_ids(encoded(merged, "ab").ids(), [1000])
 }

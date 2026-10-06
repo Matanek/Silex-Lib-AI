@@ -93,12 +93,14 @@ public class Tokenizer {
     private let vocabulary:Dictionary<int, uint8[]>
     private let normalization:Normalization
     private let splitter:Regex?
+    private let rules:Dictionary<TokenPair, MergeRule>
 
-    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>, normalization:Normalization, splitter:Regex?) {
+    module init(byte_ids:int[], vocabulary:Dictionary<int, uint8[]>, normalization:Normalization, splitter:Regex?, rules:Dictionary<TokenPair, MergeRule>) {
         self.byte_ids = byte_ids
         self.vocabulary = vocabulary
         self.normalization = normalization
         self.splitter = splitter
+        self.rules = rules
     }
 
     static func load_bpe(vocabulary_path:str, merges_path:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
@@ -124,7 +126,7 @@ public class Tokenizer {
         }
         let source = normalize_text(text, self.normalization)
         let normalized_count = UTF8.byte_count(source)
-        if normalized_count > options.maximum_normalized_bytes || normalized_count > options.maximum_tokens {
+        if normalized_count > options.maximum_normalized_bytes {
             return Result<Encoding, EncodeError>.failure(EncodeError(
                 kind:EncodeErrorKind.limit_exceeded, detail:"normalized text exceeds the configured encoding limit"
             ))
@@ -132,14 +134,26 @@ public class Tokenizer {
         let boundaries = text_segments(source, self.splitter)
         let bytes = UTF8.bytes(source)
         var pieces:Piece[] = []
-        var index = 0
         for boundary in boundaries {
-            index = boundary.start
-            while index < boundary.end {
-                let piece_bytes:uint8[] = [bytes[index]]
-                pieces.append(Piece(id:self.byte_ids[bytes[index] as int], bytes:piece_bytes,
-                    span:Span(start:index, end:index + 1)))
-                index++
+            var segment:Piece[] = []
+            if self.rules.count() == 0 {
+                var index = boundary.start
+                while index < boundary.end {
+                    let values:uint8[] = [bytes[index]]
+                    segment.append(Piece(id:self.byte_ids[bytes[index] as int], bytes:values,
+                        span:Span(start:index, end:index + 1)))
+                    index++
+                }
+            } else {
+                var merger = SegmentMerger(bytes, boundary, self.byte_ids, self.rules)
+                segment = merger.pieces(bytes)
+            }
+            for piece in segment {
+                if pieces.count() >= options.maximum_tokens {
+                    return Result<Encoding, EncodeError>.failure(EncodeError(
+                        kind:EncodeErrorKind.limit_exceeded, detail:"encoding exceeds the configured token limit"))
+                }
+                pieces.append(piece)
             }
         }
         return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))

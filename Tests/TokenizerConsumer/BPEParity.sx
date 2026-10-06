@@ -1,0 +1,141 @@
+use AI.Tokenizer
+
+func main() {
+    let texts:str[] = ["",
+        "abc",
+        "abca",
+        "aaaaa",
+        "aaaaaa",
+        "abababab",
+        "abcabc",
+        "baba",
+        "aaaaaaaaaaaaaaaaa",
+        "a",
+        "b",
+        "c",
+        "aa",
+        "ab",
+        "ac",
+        "ba",
+        "bb",
+        "bc",
+        "ca",
+        "cb",
+        "cc",
+        "aaa",
+        "aab",
+        "aac",
+        "aba",
+        "abb",
+        "abc",
+        "aca",
+        "acb",
+        "acc",
+        "baa",
+        "bab",
+        "bac",
+        "bba",
+        "bbb",
+        "bbc",
+        "bca",
+        "bcb",
+        "bcc",
+        "caa",
+        "cab",
+        "cac",
+        "cba",
+        "cbb",
+        "cbc",
+        "cca",
+        "ccb",
+        "ccc",
+        "cbcbcbaacaaabbacacbbacbccbbbaabbcbbcacacbaaabcabc",
+        "caacaacbacbbcaccabacaaababccaacbcbcccababaaacacbbabaaacbcaacacbaacabbbcbcbcbbbacabcb",
+        "bbbbbbaacabaa",
+        "ccbaccbababbbccaabbcabbbcccacbcacaccbbbbbaaac",
+        "aabacbabcaabcabacaacacbacbaacaabcbbcbaaabbabcabaacbbbbcbcbcbabcabccabaacababbcbcbcbbbaabacaca",
+        "cbbb",
+        "acbbcbbbbbccaaabbabacbbacacbcacbbccaacacacabcaccbcacaabbcaaaaaccbbbcaabcabaaabbbaccabbbcc",
+        "cacccbcabbaaababbcabca",
+        "bcbbccaaaaccaaabaccbaacbabccbbcbccccccabaaabbacbacccaabbcbaacbbbcccaacb",
+        "ccaabcccbcacababcccbabbabccacacbcabbbccbaccccbacbcacbbbccababbac",
+        "bbcabbbcbacccbcabbbacaacabbabbababbacaaaababcbbbbabacccbcaccccabaccccabccaaacba",
+        "bbabcaacacbbacacbacacacacbcbaabaccbcabbbabbaabbcaaacabcccaccbbbccccbbcbcabbbbba",
+        "aaaabbaccaccbbcaacbbb",
+        "bcbcaccaaabcaaaccca",
+        "caccbbcc",
+        "cabcbaabca",
+        "bbbcababaccaaaabaabcbbcbcccbabaacacaabbacbbbcccbbabaaaaccbaabccbcbbbaaccababbcabcaacaaaccc",
+        "baaaacccaabbbbcccabbacbaabcba",
+        "cbbaabaababccbaccc",
+        "bccabbabbbbabccaaacaabbcbbbccbaccbbacabaa",
+        "aabbabcabaacaabbabbcaabbacbbbbaccbcabcbcaaaaabacbccacacbabaccbabbcbbaaaabcaabbacccbccacbbaa",
+        "ccacbbabcbcccacacabaabaacccbbaaaaccbbbaaaabaacbc",
+        "aabcacbbacbaacbbbabbaacaacccabaaaaabbcbababbcbabcbccaabacabcbababcabacacbaccbbbccbabb",
+        "abaabacaccababbcbcacbabcbccabbababaacbabaabcb",
+        "bacccbccbaccbabababcabcbbccbbacbcbcbbbabaccabacabcbbbcaacacccbabcacbaccbabbccabbbbcaaabccb",
+        "acaccbbbcabccaaacbaacbabccbab",
+        "baabaacbaaabbbcaababaacaaab",
+        "cccbbcacbabcbccbcbbcbbabbbccacaaacaaacabababcccbbaaccba",
+        "acacbcabcacbcccababbbcacacabbacbabbbacaacbbbcaccbbaaabaaaccaacbccbbaacccccbabacaaaacaabba",
+        "cbcaaaabcbcbaaccb",
+        "ccaabbcaacabbabaccaaacabbcabababacabbccbbbbbbcbabcbbaaccbcacbcbcccccabaacbcabacc",
+        "bbcbbaaccaacabbbcacbbbbaaacbbccbacaaacbbcbaccabbbabca",
+        "bcaabacaababcbabbaabbccaaabaacccccbaaa",
+        "aaaabbabccbcabbacccababcccbabcbaabcbbabcacaaacaacbabacacababbccbccc",
+        "acacaabbbbbccccbacaaaababcccacccbbbabbacbabaabaaa",
+        "bacbbabcaabcbbbbbb",
+        "ccaaacbabbababacbcbcaabacbcaccaacbbcbccabbaabaabcabbbbbbaaaababcccaaabbcccbaccbaccaacca",
+        "acccacaabacbbaaacab",
+        "aaccacc",
+        "cabaabbcccabacacbbbbaaacabbbaaabbcccaaaccaaaccabbaabbbcabcabbbaaabbcccbc",
+        "abaacbbbcacabccabaaaacabcaabbcbabbbaacccabbbacbac",
+        "cbccbaaabcaabacaccabcccb",
+        "bbabbbccccbccaccacbcbaaccabbaaccacbbbcbbabccccaabaabcabcaccbbaabccccc",
+        "bacbccabaccbabbbababaaccacbacbaaaabcababaabacabccaca",
+        "aabbaaabccbabbccaacbbbcbacaabccabaccacbccccacacaaaccbabcbbcacabcbb",
+        "caccbcbcbabaababcbacccbccabcabcacbcbaaaabbbcbcb",
+        "aaabaacabbbccaaaccbababaaccbcaaacbcccab",
+        "ccabbbaccacbbcc",
+        "abcbcbcbabbaabbccbbbcaabcbccaababbccbbaacbcaccbbcbbcabca",
+        "acccbacaaccabaabbcbbcccbbbcbbbcbbccccbbaacaabbcabcabbbaabcacccccabaaccaaacaacbc",
+        "bbbaccbaabcbbccaccbacacaacbcccbbcbbabcbcbcccababcbbcbaabbcabcbabaaacbcccbccb",
+        "bbacbaabccabcbaacbbbacabcbbcccaaabbcbbaaaa",
+        "bcacccacccccbaabacabbbaaabaaabaaabbabbbbcabcacccabaacaccbcbbaccacabbcbbbcbabaaacacbacabba",
+        "bcbbbacccaacacaaacaaccbabaacaccaabaaacacbcabacaccacbbbab",
+        "bccaaccbaabcaccbbcacccccccbcacbabaacaca",
+        "cbbacccccacbaabbcaacc",
+        "cbbbccacacabbbcbaacbcacabbcccacabcbccbcbcbbbacbcabbabbcabbbcabaaccabcabc",
+        "cbacccbaccaacaa",
+        "caacbababaabcccabbbccaaabcbaaccaccbbccbbaccaccabab",
+        "accbcc",
+        "b",
+        "acacbaaabcbcabcbabbbaacbbabccccbaaccacbcaaacaccabab",
+        "baaacacacbacacacbccccbbbcbcbbaaacccbcbcacbaabaacbcccabacbabcabaccbcabaaabbcababbcbbacbcb",
+        "abbcbbccabcccbababaacaaacaabcbaaccaac"]
+    let rules:str[] = ["a b\nb c\nab c\na a\naa aa\nab ab\naba b\nba ba\nabc abc\n", "b c\na b\nbc a\na a\naa aa\nab ab\n", "aa aa\na a\na b\nab c\n"]
+    var model_index = 0
+    while model_index < 4 {
+        var vocabulary = embed_text("Fixtures/bpe-vocab.json")
+        if model_index == 3 { vocabulary = embed_text("Fixtures/bpe-sparse.json") }
+        var model = try Tokenizer.parse_bpe(vocabulary, rules[model_index % 3]) else error { panic(error.detail) }
+        var case_index = 0
+        for text in texts {
+            let result = try model.encode(text) else error { panic(error.detail) }
+            let decoded = try model.decode(result.ids()) else error { panic(error.detail) }
+            assert(decoded == text)
+            print("case $(model_index):$(case_index)")
+            print("tokens $(result.count())")
+            var cursor = 0
+            for piece in result.pieces() {
+                assert(piece.span!.start == cursor && piece.span!.end > cursor)
+                assert(piece.bytes.count() == piece.span!.end - cursor)
+                cursor = piece.span!.end
+                print("$(piece.id):$(piece.span!.start):$(piece.span!.end)")
+            }
+            assert(cursor == text.count())
+            case_index++
+        }
+        model_index++
+    }
+}

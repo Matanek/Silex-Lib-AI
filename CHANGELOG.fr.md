@@ -2,10 +2,13 @@
 
 ## [Unreleased]
 
+- Appliquer les fusions BPE par rang puis occurrence gauche, en conservant les
+  frontières et spans ; borner les tokens après fusion, sans rescannage global.
+
 - Ajouter les choix immuables `identity`/NFC/NFKC et `none`/GPT-2 au chargement ;
   exposer les spans de segments du texte normalisé et borner sa taille séparément.
 
-- Ajouter `AI.Tokenizer` pour charger un alphabet byte-level complet sans fusion,
+- Ajouter `AI.Tokenizer` pour charger un alphabet byte-level complet,
   analyser aussi un modèle en mémoire, encoder en IDs portables et décoder les
   octets ou du UTF-8 strict. Encodages
   possédés avec spans UTF-8, erreurs structurées et limites configurables.

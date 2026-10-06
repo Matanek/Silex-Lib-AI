@@ -10,7 +10,7 @@ selection around application-defined genomes, fitness, crossover and mutation.
 feed-forward neuroevolution with innovation tracking, structural mutation,
 crossover, and speciation.
 
-`AI.Tokenizer` loads a complete byte-level vocabulary without merge rules,
+`AI.Tokenizer` loads a complete byte-level BPE vocabulary and merge rules,
 normalizes and segments text before encoding portable token IDs, and decodes
 bytes or strict UTF-8. This
 development surface is documented in the [tokenizer guide](Docs/EN/Tokenizer.md).

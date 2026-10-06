@@ -61,12 +61,9 @@ func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
     for id in byte_ids {
         if id < 0 { return load_failure(LoadErrorKind.incomplete_alphabet, vocabulary_path, "vocabulary must cover all 256 bytes") }
     }
-    let count = try validate_merges(merges_text, symbols, merges_path, options.maximum_merge_rules)
-    if count != 0 {
-        return load_failure(LoadErrorKind.unsupported_model, merges_path, "this version supports models without merge rules only")
-    }
+    let rules = try parse_merges(merges_text, symbols, merges_path, options.maximum_merge_rules)
     let splitter = try compile_splitter(options.pre_tokenizer, vocabulary_path)
-    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter))
+    return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter, rules))
 }
 
 func read_model_file(path:str, maximum_bytes:int, invalid_text:LoadErrorKind) Result<str, LoadError> {
@@ -140,9 +137,9 @@ func alphabet_byte(scalar:uint32) int {
     return -1
 }
 
-func validate_merges(text:str, symbols:Dictionary<str, int>, path:str?, maximum_rules:int) Result<int, LoadError> {
+func parse_merges(text:str, symbols:Dictionary<str, int>, path:str?, maximum_rules:int) Result<Dictionary<TokenPair, MergeRule>, LoadError> {
     let bytes = UTF8.bytes(text)
-    var seen = Dictionary<str, bool>()
+    var rules = empty_rules()
     var start = 0
     var cursor = 0
     var count = 0
@@ -153,29 +150,34 @@ func validate_merges(text:str, symbols:Dictionary<str, int>, path:str?, maximum_
             if end > start {
                 let line_view = @bytes[start:end]
                 let line = try UTF8.decode(line_view) else {
-                    return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid merge line"))
+                    return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid merge line"))
                 }
                 if line != "#version: 0.2" || start != 0 {
                     if count >= maximum_rules {
-                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded, path:path, detail:"too many merge rules"))
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.limit_exceeded, path:path, detail:"too many merge rules"))
                     }
                     var separator = start
                     while separator < end && bytes[separator] != 32 { separator++ }
                     if separator == start || separator + 1 >= end {
-                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"expected two merge symbols separated by one space"))
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"expected two merge symbols separated by one space"))
                     }
                     let left_view = @bytes[start:separator]
                     let right_view = @bytes[separator + 1:end]
                     let left = try UTF8.decode(left_view) else {
-                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid left merge symbol"))
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid left merge symbol"))
                     }
                     let right = try UTF8.decode(right_view) else {
-                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid right merge symbol"))
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"invalid right merge symbol"))
                     }
-                    if !symbols.contains(left) || !symbols.contains(right) || !symbols.contains(left + right) || seen.contains(line) {
-                        return Result<int, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"unknown, duplicate, or impossible merge rule"))
+                    if !symbols.contains(left) || !symbols.contains(right) || !symbols.contains(left + right) {
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_merges, path:path, detail:"unknown, duplicate, or impossible merge rule"))
                     }
-                    seen.set(line, true)
+                    let pair = TokenPair(left:symbols.find(left)!, right:symbols.find(right)!)
+                    if rules.contains(pair) {
+                        return Result<Dictionary<TokenPair, MergeRule>, LoadError>.failure(LoadError(
+                            kind:LoadErrorKind.invalid_merges, path:path, detail:"duplicate merge rule"))
+                    }
+                    rules.set(pair, MergeRule(rank:count, id:symbols.find(left + right)!))
                     count++
                 }
             }
@@ -183,7 +185,7 @@ func validate_merges(text:str, symbols:Dictionary<str, int>, path:str?, maximum_
         }
         cursor++
     }
-    return Result<int, LoadError>.success(count)
+    return Result<Dictionary<TokenPair, MergeRule>, LoadError>.success(rules)
 }
 
 func load_failure(kind:LoadErrorKind, path:str?, detail:str) Result<Tokenizer, LoadError> {

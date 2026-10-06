@@ -10,8 +10,7 @@ bytes in ascending order map to scalars U+0100 onward. This follows the
 that external IDs never determine an allocation size. Other files deliberately
 alter JSON, IDs, alphabet coverage, token lengths or merge lines. They are
 malformed inputs, not supported models. `with-merge.json` adds token `ab` with
-ID 1000; its corresponding rule is validated then rejected as unsupported in
-the first encoder. `merges.txt`, `empty-merges.txt` and `crlf-merges.txt` have no
+ID 1000; its corresponding rule is validated and applied by BPE. `merges.txt`, `empty-merges.txt` and `crlf-merges.txt` have no
 rules and are supported. All ordinary tests consume these checked-in fixtures
 without Python or model downloads.
 
@@ -27,3 +26,10 @@ actual normalization/ID/span/segment trace for comparison.
 Regenerate with `node GenerateTextReference.cjs` from this directory, using
 Node v23.2.0 / Unicode 16.0 as required by the generator. The adjacent metadata
 records the exact engine and source pattern; normal Silex tests use no Node.
+
+`bpe-vocab.json` adds original ASCII merge pieces and one UTF-8 composed accent.
+`bpe-sparse.json` uses external IDs near int.max. `GenerateBPEReference.py`
+regenerates 448 selected ASCII comparisons with a deterministic seed and an
+independent naive rank/left rescan. `BPEParity.sx` emits the actual IDs/spans and
+checks decoded bytes. No Python is needed to execute the checked-in corpus.
+This private test reference complements the separate pinned Tokenizers oracle.
