@@ -45,7 +45,7 @@ func survival_definition() BehaviourTree.Definition<Creature> {
     builder.end()
 
     var definition:BehaviourTree.Definition<Creature>? = null
-    match builder.build() {
+    match (try builder.build()) {
         success(value) => { definition = value }
         failure(_) => { panic("the consumer behaviour tree must be valid") }
     }

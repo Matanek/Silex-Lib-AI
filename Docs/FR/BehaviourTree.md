@@ -33,7 +33,7 @@ func create_behaviour() Result<BehaviourTree.Definition<Creature>, BehaviourTree
     builder.condition("is hungry", is_hungry)
     builder.action("eat", eat)
     builder.end()
-    return builder.build()
+    return (try builder.build())
 }
 ```
 
@@ -51,7 +51,7 @@ la définition ne conserve jamais ce contexte.
 
 ```sx
 var definition:BehaviourTree.Definition<Creature>? = null
-match create_behaviour() {
+match try create_behaviour() {
     success(value) => { definition = value }
     failure(_) => { panic("invalid creature behaviour") }
 }

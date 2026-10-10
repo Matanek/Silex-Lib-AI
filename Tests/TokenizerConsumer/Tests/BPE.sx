@@ -71,11 +71,11 @@ test "BPE token limits apply to the fused result rather than the byte count" {
     let result = try model.encode("ab", Tokenizer.EncodeOptions(maximum_input_bytes:2,
         maximum_normalized_bytes:2, maximum_tokens:1)) else error { panic(error.detail) }
     assert(result.count() == 1 && result.ids()[0] == 256)
-    match model.encode("aba", Tokenizer.EncodeOptions(maximum_tokens:1)) {
+    match (try model.encode("aba", Tokenizer.EncodeOptions(maximum_tokens:1))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
         success(_) => { panic("fused token limit ignored") }
     }
-    match model.encode("ab", Tokenizer.EncodeOptions(maximum_tokens:0)) {
+    match (try model.encode("ab", Tokenizer.EncodeOptions(maximum_tokens:0))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
         success(_) => { panic("zero token limit ignored") }
     }

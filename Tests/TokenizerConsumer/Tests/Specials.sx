@@ -16,9 +16,9 @@ func special_model() Tokenizer {
 }
 func special_invalid(tokens:Tokenizer.SpecialToken[], kind:Tokenizer.LoadErrorKind = Tokenizer.LoadErrorKind.invalid_special_tokens,
     maximum:int = 256, maximum_bytes:int = 65536) {
-    match Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "",
+    match (try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "",
         Tokenizer.LoadOptions(special_tokens:tokens, maximum_special_tokens:maximum,
-            maximum_special_bytes:maximum_bytes, normalization:Tokenizer.Normalization.nfc)) {
+            maximum_special_bytes:maximum_bytes, normalization:Tokenizer.Normalization.nfc))) {
         failure(error) => { assert(error.kind == kind, error.detail) }
         success(_) => {panic("invalid controls accepted")}
     }
@@ -42,11 +42,11 @@ test "special tokens reject empty duplicate colliding and unstable configuration
 }
 test "literal controls require explicit policy and match the longest surface" {
     var model = special_model()
-    match model.encode("abc<c>long") {
+    match (try model.encode("abc<c>long")) {
         failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.forbidden_special)}
         success(_) => {panic("implicit control injection")}
     }
-    match model.encode("<c>long", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1002]))) {
+    match (try model.encode("<c>long", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow([1002])))) {
         failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.forbidden_special)}
         success(_) => {panic("longest match bypassed")}
     }
@@ -75,7 +75,7 @@ test "boundary controls are explicit missing roles fail and added spans are abse
     let empty = try model.encode("", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.eos, maximum_tokens:1)) else error {panic(error.detail)}
     assert(empty.count() == 1 && empty.pieces()[0].span == null && empty.segments().count() == 0)
     var plain = try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), "") else error {panic(error.detail)}
-    match plain.encode("", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos)) {
+    match (try plain.encode("", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos))) {
         failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options)}
         success(_) => {panic("missing BOS silently ignored")}
     }
@@ -86,22 +86,22 @@ test "special options metadata limits and decoding preserve model ownership" {
     metadata[0] = Tokenizer.SpecialToken(surface:"changed", id:0, role:Tokenizer.SpecialRole.eos)
     assert(model.special_tokens()[0].id == 1000)
     for ids in [[9999], [1000, 1000]] {
-        match model.encode("", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow(ids))) {
+        match (try model.encode("", Tokenizer.EncodeOptions(special_input:Tokenizer.SpecialInput.allow(ids)))) {
             failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options)}
             success(_) => {panic("invalid allow-list accepted")}
         }
     }
-    match model.encode("abc", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos, maximum_tokens:2)) {
+    match (try model.encode("abc", Tokenizer.EncodeOptions(boundary_tokens:Tokenizer.BoundaryTokens.bos_and_eos, maximum_tokens:2))) {
         failure(error) => {assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded)}
         success(_) => {panic("controls ignored by token limit")}
     }
-    match model.decode([1000], Tokenizer.DecodeOptions(maximum_bytes:4)) {
+    match (try model.decode([1000], Tokenizer.DecodeOptions(maximum_bytes:4))) {
         failure(error) => {assert(error.kind == Tokenizer.DecodeErrorKind.limit_exceeded)}
         success(_) => {panic("controls ignored by byte limit")}
     }
     let ignored = try model.decode([1000], Tokenizer.DecodeOptions(maximum_bytes:0, special_tokens:Tokenizer.DecodeSpecialTokens.skip)) else error {panic(error.detail)}
     assert(ignored == "")
-    match model.decode([1000, 9223372036854775807], Tokenizer.DecodeOptions(special_tokens:Tokenizer.DecodeSpecialTokens.skip)) {
+    match (try model.decode([1000, 9223372036854775807], Tokenizer.DecodeOptions(special_tokens:Tokenizer.DecodeSpecialTokens.skip))) {
         failure(error) => {assert(error.kind == Tokenizer.DecodeErrorKind.unknown_id && error.position == 1)}
         success(_) => {panic("unknown ID skipped with controls")}
     }

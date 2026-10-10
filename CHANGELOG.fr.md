@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Adopte la déclaration `Result` unique : l’appel ordinaire rend la valeur
+  ou arrête le programme sur erreur ; `try appel()` conserve le `Result`. Les
+  anciens appels stockant un résultat et propagations deviennent explicites.
+  Cette révision requiert la toolchain de développement avec cette sémantique
+  de `try` ; sa publication doit coordonner les versions du compilateur et des
+  packages.
+
 - Ajouter `AI.Tokenizer` : modèles BPE byte-level immuables chargés depuis
   fichiers ou mémoire, normalisation identity/NFC/NFKC et découpage none/GPT-2,
   IDs portables, morceaux et spans UTF-8 possédés, décodage octets ou UTF-8 strict.

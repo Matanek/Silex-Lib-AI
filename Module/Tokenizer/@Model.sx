@@ -114,11 +114,11 @@ public class Tokenizer {
     }
 
     static func load_bpe(vocabulary_path:str, merges_path:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
-        return load_model(vocabulary_path, merges_path, options)
+        return (try load_model(vocabulary_path, merges_path, options))
     }
 
     static func parse_bpe(vocabulary_json:str, merges_text:str, options:LoadOptions = LoadOptions()) Result<Tokenizer, LoadError> {
-        return parse_model(vocabulary_json, merges_text, options, null, null)
+        return (try parse_model(vocabulary_json, merges_text, options, null, null))
     }
 
     func encode(text:str, options:EncodeOptions = EncodeOptions()) Result<Encoding, EncodeError> {
@@ -141,8 +141,8 @@ public class Tokenizer {
                 kind:EncodeErrorKind.limit_exceeded, detail:"normalized text exceeds the configured encoding limit"
             ))
         }
-        let allowed = try self.controls.allowed(options.special_input)
-        let added = try self.controls.boundaries(options.boundary_tokens)
+        let allowed = try self.controls.allowed(options.special_input) else error { return Result<Encoding,EncodeError>.failure(error) }
+        let added = try self.controls.boundaries(options.boundary_tokens) else error { return Result<Encoding,EncodeError>.failure(error) }
         var boundary_count = 0
         if added.first >= 0 { boundary_count++ }
         if added.last >= 0 { boundary_count++ }
@@ -156,21 +156,21 @@ public class Tokenizer {
         let matches = self.controls.find(bytes, options.special_input)
         var boundaries:Span[] = []
         var pieces:Piece[] = []
-        if added.first >= 0 { try append_control(pieces, self.controls.values[added.first], null, body_limit) }
+        if added.first >= 0 { try append_control(pieces, self.controls.values[added.first], null, body_limit) else error { return Result<Encoding,EncodeError>.failure(error) } }
         var cursor = 0
         for found in matches {
             if !allowed.contains(self.controls.values[found.index].id) {
                 return Result<Encoding, EncodeError>.failure(EncodeError(kind:EncodeErrorKind.forbidden_special,
                     detail:"literal special token is not allowed at byte $(found.start)"))
             }
-            try self.encode_region(bytes, cursor, found.start, pieces, boundaries, body_limit)
+            try self.encode_region(bytes, cursor, found.start, pieces, boundaries, body_limit) else error { return Result<Encoding,EncodeError>.failure(error) }
             let span = Span(start:found.start, end:found.end)
             boundaries.append(span)
-            try append_control(pieces, self.controls.values[found.index], span, body_limit)
+            try append_control(pieces, self.controls.values[found.index], span, body_limit) else error { return Result<Encoding,EncodeError>.failure(error) }
             cursor = found.end
         }
-        try self.encode_region(bytes, cursor, bytes.count(), pieces, boundaries, body_limit)
-        if added.last >= 0 { try append_control(pieces, self.controls.values[added.last], null, options.maximum_tokens) }
+        try self.encode_region(bytes, cursor, bytes.count(), pieces, boundaries, body_limit) else error { return Result<Encoding,EncodeError>.failure(error) }
+        if added.last >= 0 { try append_control(pieces, self.controls.values[added.last], null, options.maximum_tokens) else error { return Result<Encoding,EncodeError>.failure(error) } }
         return Result<Encoding, EncodeError>.success(Encoding(source, pieces, boundaries))
     }
 
@@ -200,7 +200,7 @@ public class Tokenizer {
                 }
             } else {
                 var merger = SegmentMerger(bytes, boundary, self.byte_ids, self.rules)
-                segment = try merger.pieces(bytes, remaining)
+                segment = try merger.pieces(bytes, remaining) else error { return Result<void,EncodeError>.failure(error) }
             }
             for piece in segment { pieces.append(piece) }
         }
@@ -246,9 +246,9 @@ public class Tokenizer {
     }
 
     func decode(ids:int[], options:DecodeOptions = DecodeOptions()) Result<str, DecodeError> {
-        let bytes = try self.decode_bytes(ids, options)
+        let bytes = try self.decode_bytes(ids, options) else error { return Result<str,DecodeError>.failure(error) }
         let view = @bytes[0:bytes.count()]
-        match UTF8.decode(view) {
+        match (try UTF8.decode(view)) {
             success(text) => { return Result<str, DecodeError>.success(text) }
             failure(error) => {
                 return Result<str, DecodeError>.failure(DecodeError(

@@ -19,7 +19,7 @@ func shared_behaviour() BehaviourTree.Definition<Mind> {
     builder.action("advance", advance_mind)
 
     var definition:BehaviourTree.Definition<Mind>? = null
-    match builder.build() {
+    match (try builder.build()) {
         success(value) => { definition = value }
         failure(_) => { panic("the catalog consumer behaviour must be valid") }
     }

@@ -36,7 +36,7 @@ func progress(state:&State) BehaviourTree.Status {
 }
 
 func require_definition(builder:BehaviourTree.Builder<State>) BehaviourTree.Definition<State> {
-    match builder.build() {
+    match (try builder.build()) {
         success(definition) => { return definition }
         failure(_) => { panic("expected a valid behaviour tree definition") }
     }
@@ -44,7 +44,7 @@ func require_definition(builder:BehaviourTree.Builder<State>) BehaviourTree.Defi
 }
 
 func expect_error(builder:BehaviourTree.Builder<State>, expected:BehaviourTree.BuildError) {
-    match builder.build() {
+    match (try builder.build()) {
         success(definition) => { panic("expected a behaviour tree build error") }
         failure(error) => { assert(error == expected) }
     }
@@ -264,7 +264,7 @@ func resume_definition() BehaviourTree.Definition<ResumeState> {
     builder.end()
     builder.end()
 
-    match builder.build() {
+    match (try builder.build()) {
         success(definition) => { return definition }
         failure(_) => { panic("expected a valid resume definition") }
     }
@@ -346,7 +346,7 @@ func interrupt_definition() BehaviourTree.Definition<InterruptState> {
     builder.action("ordinary work", run_ordinary, abandon_ordinary)
     builder.end()
 
-    match builder.build() {
+    match (try builder.build()) {
         success(definition) => { return definition }
         failure(_) => { panic("expected a valid interruption definition") }
     }
@@ -400,7 +400,7 @@ test "advance exposes budget exhaustion and preserves pending traversal" {
     builder.action("three", budget_action)
     builder.end()
     var definition:BehaviourTree.Definition<BudgetState>? = null
-    match builder.build() {
+    match (try builder.build()) {
         success(value) => { definition = value }
         failure(_) => { panic("expected a valid bounded definition") }
     }
@@ -441,7 +441,7 @@ test "prepared instances keep stable storage across warm evaluations and resets"
         depth--
     }
     var definition:BehaviourTree.Definition<StorageState>? = null
-    match builder.build() {
+    match (try builder.build()) {
         success(value) => { definition = value }
         failure(_) => { panic("expected a valid deep definition") }
     }

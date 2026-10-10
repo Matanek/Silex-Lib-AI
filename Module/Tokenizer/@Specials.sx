@@ -124,11 +124,11 @@ struct SpecialTable {
         var first = -1
         var last = -1
         if request == BoundaryTokens.bos || request == BoundaryTokens.bos_and_eos {
-            if self.bos < 0 { return missing_boundary() }
+            if self.bos < 0 { return (try missing_boundary()) }
             first = self.bos
         }
         if request == BoundaryTokens.eos || request == BoundaryTokens.bos_and_eos {
-            if self.eos < 0 { return missing_boundary() }
+            if self.eos < 0 { return (try missing_boundary()) }
             last = self.eos
         }
         return Result<AddedBoundaries, EncodeError>.success(AddedBoundaries(first:first, last:last))
@@ -210,7 +210,7 @@ func load_specials(options:LoadOptions, vocabulary:Dictionary<int, uint8[]>, sym
     if surfaces.count() > 0 {
         for member in vocabulary.iterator() {
             let view = @member.value[0:member.value.count()]
-            match UTF8.decode(view) {
+            match (try UTF8.decode(view)) {
                 success(text) => {
                     if surfaces.contains(text) {
                         return Result<SpecialTable, LoadError>.failure(LoadError(kind:LoadErrorKind.invalid_special_tokens,

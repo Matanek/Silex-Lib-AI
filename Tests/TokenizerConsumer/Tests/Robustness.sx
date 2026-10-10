@@ -18,7 +18,7 @@ func robust_model(merges:str = "", options:Tokenizer.LoadOptions = Tokenizer.Loa
 }
 
 func robust_limit(model:Tokenizer, input:str, options:Tokenizer.EncodeOptions) {
-    match model.encode(input, options) {
+    match (try model.encode(input, options)) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded, error.detail) }
         success(_) => { panic("encoding limit ignored") }
     }
@@ -84,16 +84,16 @@ test "normalization expansion and long false control prefixes remain bounded" {
 
 test "deep truncated and oversized merge inputs return structured errors" {
     let depth = robust_repeat("[",128) + "0" + robust_repeat("]",128)
-    match Tokenizer.parse_bpe(depth, "", Tokenizer.LoadOptions(maximum_json_depth:4)) {
+    match (try Tokenizer.parse_bpe(depth, "", Tokenizer.LoadOptions(maximum_json_depth:4))) {
         failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.limit_exceeded) }
         success(_) => { panic("deep input accepted") }
     }
     let truncated = "{\"a\":\"" + robust_repeat("a",32768)
-    match Tokenizer.parse_bpe(truncated, "") {
+    match (try Tokenizer.parse_bpe(truncated, "")) {
         failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_json) }
         success(_) => { panic("truncated input accepted") }
     }
-    match Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), robust_repeat("a",32768) + " b\n") {
+    match (try Tokenizer.parse_bpe(embed_text("../Fixtures/bpe-vocab.json"), robust_repeat("a",32768) + " b\n")) {
         failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_merges) }
         success(_) => { panic("unknown oversized merge symbol accepted") }
     }

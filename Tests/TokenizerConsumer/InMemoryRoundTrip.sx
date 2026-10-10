@@ -21,11 +21,11 @@ func main() {
     index = 0
     for byte in bytes { assert(byte as int == index); index++ }
     assert(bytes.count() == 256)
-    match tokenizer.decode(all_ids) {
+    match (try tokenizer.decode(all_ids)) {
         failure(error) => { assert(error.kind == Tokenizer.DecodeErrorKind.invalid_utf8 && error.position == 128) }
         success(_) => { panic("invalid UTF8 accepted") }
     }
-    match Tokenizer.parse_bpe("{", "") {
+    match (try Tokenizer.parse_bpe("{", "")) {
         failure(error) => { assert(error.kind == Tokenizer.LoadErrorKind.invalid_json && error.path == null) }
         success(_) => { panic("invalid JSON accepted") }
     }

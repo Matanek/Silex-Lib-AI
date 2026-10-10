@@ -106,19 +106,19 @@ test "raw normalized and token limits distinguish shrinking and expanding forms"
     let shrunk = try tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(
         maximum_input_bytes:3, maximum_normalized_bytes:2, maximum_tokens:2)) else error { panic(error.detail) }
     assert(shrunk.normalized_text() == "fi")
-    match tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_input_bytes:2)) {
+    match (try tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_input_bytes:2))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
         success(_) => { panic("raw input limit ignored") }
     }
-    match tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_normalized_bytes:1)) {
+    match (try tokenizer.encode("ﬁ", Tokenizer.EncodeOptions(maximum_normalized_bytes:1))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
         success(_) => { panic("normalized byte limit ignored") }
     }
-    match tokenizer.encode("¼", Tokenizer.EncodeOptions(maximum_tokens:3)) {
+    match (try tokenizer.encode("¼", Tokenizer.EncodeOptions(maximum_tokens:3))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.limit_exceeded) }
         success(_) => { panic("expanded token limit ignored") }
     }
-    match tokenizer.encode("", Tokenizer.EncodeOptions(maximum_normalized_bytes:-1)) {
+    match (try tokenizer.encode("", Tokenizer.EncodeOptions(maximum_normalized_bytes:-1))) {
         failure(error) => { assert(error.kind == Tokenizer.EncodeErrorKind.invalid_options) }
         success(_) => { panic("negative normalized limit ignored") }
     }

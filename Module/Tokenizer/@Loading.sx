@@ -7,10 +7,10 @@ use STD.Text.UTF8
 use STD.Collections.Dictionary
 
 func load_model(vocabulary_path:str, merges_path:str, options:LoadOptions) Result<Tokenizer, LoadError> {
-    try validate_load_options(options, vocabulary_path)
-    let vocabulary_text = try read_model_file(vocabulary_path, options.maximum_file_bytes, LoadErrorKind.invalid_vocabulary)
-    let merges_text = try read_model_file(merges_path, options.maximum_file_bytes, LoadErrorKind.invalid_merges)
-    return parse_model(vocabulary_text, merges_text, options, vocabulary_path, merges_path)
+    try validate_load_options(options, vocabulary_path) else error { return Result<Tokenizer,LoadError>.failure(error) }
+    let vocabulary_text = try read_model_file(vocabulary_path, options.maximum_file_bytes, LoadErrorKind.invalid_vocabulary) else error { return Result<Tokenizer,LoadError>.failure(error) }
+    let merges_text = try read_model_file(merges_path, options.maximum_file_bytes, LoadErrorKind.invalid_merges) else error { return Result<Tokenizer,LoadError>.failure(error) }
+    return (try parse_model(vocabulary_text, merges_text, options, vocabulary_path, merges_path))
 }
 
 func validate_load_options(options:LoadOptions, path:str?) Result<void, LoadError> {
@@ -24,23 +24,23 @@ func validate_load_options(options:LoadOptions, path:str?) Result<void, LoadErro
 
 func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
     vocabulary_path:str?, merges_path:str?) Result<Tokenizer, LoadError> {
-    try validate_load_options(options, vocabulary_path)
+    try validate_load_options(options, vocabulary_path) else error { return Result<Tokenizer,LoadError>.failure(error) }
     if UTF8.byte_count(vocabulary_text) > options.maximum_file_bytes {
-        return load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "vocabulary exceeds the configured byte limit")
+        return (try load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "vocabulary exceeds the configured byte limit"))
     }
     if UTF8.byte_count(merges_text) > options.maximum_file_bytes {
-        return load_failure(LoadErrorKind.limit_exceeded, merges_path, "merges exceed the configured byte limit")
+        return (try load_failure(LoadErrorKind.limit_exceeded, merges_path, "merges exceed the configured byte limit"))
     }
-    var document = try JSON.try_parse(vocabulary_text, options.maximum_json_depth) else error {
+    var document = try JSON.parse(vocabulary_text, options.maximum_json_depth) else error {
         var kind = LoadErrorKind.invalid_json
         if error.kind == JSON.ParseErrorKind.depth_limit { kind = LoadErrorKind.limit_exceeded }
-        return load_failure(kind, vocabulary_path, error.detail)
+        return (try load_failure(kind, vocabulary_path, error.detail))
     }
     if document.kind() != JSON.Kind.object {
-        return load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "vocabulary must be a JSON object")
+        return (try load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "vocabulary must be a JSON object"))
     }
     if document.count() > options.maximum_vocabulary_entries {
-        return load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "too many vocabulary entries")
+        return (try load_failure(LoadErrorKind.limit_exceeded, vocabulary_path, "too many vocabulary entries"))
     }
     var members = document.as_object()!
     var vocabulary = Dictionary<int, uint8[]>()
@@ -51,19 +51,19 @@ func parse_model(vocabulary_text:str, merges_text:str, options:LoadOptions,
     for member in members {
         let id = member.value.as_integer() ?? -1
         if id < 0 || vocabulary.contains(id) {
-            return load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "token IDs must be unique non-negative integers")
+            return (try load_failure(LoadErrorKind.invalid_vocabulary, vocabulary_path, "token IDs must be unique non-negative integers"))
         }
-        let bytes = try token_bytes(member.name, vocabulary_path, options.maximum_token_bytes)
+        let bytes = try token_bytes(member.name, vocabulary_path, options.maximum_token_bytes) else error { return Result<Tokenizer,LoadError>.failure(error) }
         vocabulary.set(id, bytes)
         symbols.set(member.name, id)
         if bytes.count() == 1 { byte_ids[bytes[0] as int] = id }
     }
     for id in byte_ids {
-        if id < 0 { return load_failure(LoadErrorKind.incomplete_alphabet, vocabulary_path, "vocabulary must cover all 256 bytes") }
+        if id < 0 { return (try load_failure(LoadErrorKind.incomplete_alphabet, vocabulary_path, "vocabulary must cover all 256 bytes")) }
     }
-    let controls = try load_specials(options, vocabulary, symbols, vocabulary_path)
-    let rules = try parse_merges(merges_text, symbols, merges_path, options.maximum_merge_rules)
-    let splitter = try compile_splitter(options.pre_tokenizer, vocabulary_path)
+    let controls = try load_specials(options, vocabulary, symbols, vocabulary_path) else error { return Result<Tokenizer,LoadError>.failure(error) }
+    let rules = try parse_merges(merges_text, symbols, merges_path, options.maximum_merge_rules) else error { return Result<Tokenizer,LoadError>.failure(error) }
+    let splitter = try compile_splitter(options.pre_tokenizer, vocabulary_path) else error { return Result<Tokenizer,LoadError>.failure(error) }
     return Result<Tokenizer, LoadError>.success(Tokenizer(byte_ids, vocabulary, options.normalization, splitter, rules, controls))
 }
 
@@ -76,8 +76,8 @@ func read_model_file(path:str, maximum_bytes:int, invalid_text:LoadErrorKind) Re
     )) else error {
         return Result<str, LoadError>.failure(LoadError(kind:LoadErrorKind.io, path:path, detail:error.detail))
     }
-    let result = IO.read_to_end<File>(file, maximum_bytes)
-    let closed = File.close(move file)
+    let result = (try IO.read_to_end<File>(file, maximum_bytes))
+    let closed = (try File.close(move file))
     let bytes = try result else error {
         var kind = LoadErrorKind.io
         if error.kind == Error.Kind.limit_exceeded { kind = LoadErrorKind.limit_exceeded }
