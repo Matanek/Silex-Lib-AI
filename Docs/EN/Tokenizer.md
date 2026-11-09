@@ -46,11 +46,7 @@ silex run Packages/AI/Tests/TokenizerConsumer/Example.sx
 silex test Packages/AI/Tests/TokenizerConsumer
 ```
 
-Development qualification uses AI and STD candidates. The new `Dictionary.find`,
-`Text.UTF8.byte_count` and new Regex capabilities must be available in the STD
-version selected
-for publication; this surface does not claim to be installable from the existing
-AI 0.1.0 tag.
+AI 0.2.0 requires the coordinated Silex 0.48.0 and STD 0.23.0 releases.
 
 ## Load an embedded model from memory
 
@@ -267,13 +263,11 @@ func main() {
 
 Output: `1000`, `258`, `1001`, then `abc`.
 
-## Development compatibility
+## Release compatibility
 
-The tokenizer must be tested with the matching Silex and STD candidates.
-Installing the published graph on October 6, 2026 fails on `UTF8.byte_count`,
-which is absent from STD 0.22.0. The planned route is AI 0.2.0 with STD 0.23.0
-and a forthcoming Silex version containing the qualified fixes. These versions
-are not presented as published. The AI 0.1.0 tag retains its original content
+The tokenizer is included in AI 0.2.0 and requires Silex 0.48.0 and STD 0.23.0
+or newer. STD provides `Dictionary.find`, `Text.UTF8.byte_count`, and the Regex
+assertions used by the models. The AI 0.1.0 tag retains its original content
 without a tokenizer.
 
 ## Verified compatibility

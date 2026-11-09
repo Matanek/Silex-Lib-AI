@@ -1,12 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-09
 
 - Adopts one `Result` declaration: an ordinary call returns the value or
   stops the program on failure; `try call()` keeps the `Result`. Existing calls
-  storing results and propagating failures are made explicit. This revision
-  requires the development toolchain with these `try` semantics; publication
-  must coordinate compiler and package versions.
+  storing results and propagating failures are made explicit. This version
+  requires Silex 0.48.0 or newer and the coordinated dependency versions.
 
 - Add `AI.Tokenizer`: immutable byte-level BPE models loaded from files or memory,
   identity/NFC/NFKC normalization and none/GPT-2 segmentation, portable IDs,

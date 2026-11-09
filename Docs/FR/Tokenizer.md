@@ -47,11 +47,7 @@ silex run Packages/AI/Tests/TokenizerConsumer/Example.sx
 silex test Packages/AI/Tests/TokenizerConsumer
 ```
 
-La qualification de développement utilise les candidats AI et STD. Les nouveaux
-appels `Dictionary.find`, `Text.UTF8.byte_count` et les nouvelles capacités Regex
-doivent être disponibles dans
-la version de STD choisie lors de la publication ; cette surface ne prétend pas
-être installable depuis le tag AI 0.1.0 déjà existant.
+AI 0.2.0 requiert les releases coordonnées Silex 0.48.0 et STD 0.23.0.
 
 ## Charger un modèle incorporé en mémoire
 
@@ -276,14 +272,12 @@ func main() {
 
 Sortie : `1000`, `258`, `1001`, puis `abc`.
 
-## Compatibilité de développement
+## Compatibilité de publication
 
-Le tokenizer doit être testé avec les candidats Silex et STD correspondants.
-L’installation isolée du graphe publié le 6 octobre 2026 échoue sur
-`UTF8.byte_count`, absent de STD 0.22.0. La route prévue est AI 0.2.0 avec
-STD 0.23.0 et une prochaine version Silex contenant les corrections qualifiées.
-Ces versions ne sont pas présentées comme publiées. Le tag AI 0.1.0 conserve
-son contenu original sans tokenizer.
+Le tokenizer est inclus dans AI 0.2.0 et requiert Silex 0.48.0 et STD 0.23.0
+ou supérieurs. STD fournit `Dictionary.find`, `Text.UTF8.byte_count` et les
+assertions Regex utilisées par les modèles. Le tag AI 0.1.0 conserve son contenu
+original sans tokenizer.
 
 ## Compatibilité vérifiée
 

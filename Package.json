@@ -1,18 +1,18 @@
 {
   "name": "AI",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": {
     "en": "Modular foundation for learning, behavior, and autonomous-agent packages.",
     "fr": "Socle modulaire des packages d’apprentissage, de comportement et d’agents autonomes."
   },
   "authors": ["Matanek"],
   "requires": {
-    "silex": ">=0.44.1"
+    "silex": ">=0.48.0"
   },
   "dependencies": {
-    "GFX": "^0.40.0",
-    "STD": "^0.22.0",
-    "Tensor": "^0.2.0",
-    "JSON": "^0.2.2"
+    "GFX": "^0.41.0",
+    "STD": "^0.23.0",
+    "Tensor": "^0.3.0",
+    "JSON": "^0.3.0"
   }
 }
